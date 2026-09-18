@@ -12,6 +12,4 @@ check:
 		scripts/opencode-server-validate
 
 build:
-	test -n "$(DEPLOY_PROJECT_ID)"
-	exordos build . --exordos-cfg-file exordos/exordos.yaml \
-		--manifest-var project_id="$(DEPLOY_PROJECT_ID)"
+	exordos build . --exordos-cfg-file exordos/exordos.yaml

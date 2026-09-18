@@ -12,7 +12,8 @@ set +x
 
 BOOTSTRAP_COMPLETE="/var/lib/opencode_server/opencode-server-bootstrap-v1-complete"
 SERVER_ENV="/etc/opencode_server/server.env"
-SERVICE_USER="opencode_server"
+SERVICE_USER="opencode"
+SERVICE_GROUP="opencode"
 STATE_DIR="/var/lib/opencode_server"
 
 persistent_disk=$(find_persistent_disk)
@@ -27,11 +28,11 @@ if ! mountpoint --quiet "$STATE_DIR"; then
         "$STATE_DIR" \
         "${PERSISTENT_MOUNT}${STATE_DIR}" \
         "$SERVICE_USER" \
-        "$SERVICE_USER"
+        "$SERVICE_GROUP"
     persist_migrate_complete
 fi
 
-sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 \
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 \
     "$STATE_DIR/cache" \
     "$STATE_DIR/config" \
     "$STATE_DIR/data" \
@@ -49,7 +50,7 @@ done
 
 grep -qx 'OPENCODE_SERVER_USERNAME=opencode' "$SERVER_ENV"
 grep -q '^OPENCODE_SERVER_PASSWORD=.' "$SERVER_ENV"
-sudo chown root:"$SERVICE_USER" "$SERVER_ENV"
+sudo chown root:"$SERVICE_GROUP" "$SERVER_ENV"
 sudo chmod 0640 "$SERVER_ENV"
 
 sudo systemctl enable --now opencode-server.service

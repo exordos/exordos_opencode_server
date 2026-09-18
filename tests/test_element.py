@@ -7,6 +7,7 @@ import yaml
 from jinja2 import Environment, StrictUndefined
 
 ROOT = Path(__file__).parents[1]
+PROJECT_ID = "12345678-c625-4fee-81d5-f691897b8142"
 
 
 def _render_manifest() -> dict[str, object]:
@@ -17,7 +18,6 @@ def _render_manifest() -> dict[str, object]:
         .render(
             version="0.1.0",
             images={"opencode_server": "https://repo.example.invalid/image.raw.zst"},
-            project_id="00000000-0000-0000-0000-000000000001",
         )
     )
     manifest = yaml.safe_load(rendered)
@@ -49,6 +49,10 @@ def test_manifest_exports_connection_resources() -> None:
     manifest = _render_manifest()
     assert manifest["name"] == "opencode_server"
     resources = manifest["resources"]
+
+    for collection in resources.values():
+        for resource in collection.values():
+            assert resource["project_id"] == PROJECT_ID
 
     node = resources["$core.compute.nodes"]["opencode_server"]
     assert node["cores"] == 2
@@ -90,7 +94,7 @@ def test_secret_is_injected_into_a_protected_environment_file() -> None:
     assert config["path"] == "/etc/opencode_server/server.env"
     assert config["mode"] == "0640"
     assert config["owner"] == "root"
-    assert config["group"] == "opencode_server"
+    assert config["group"] == "opencode"
     assert config["body"]["kind"] == "text"
     content = config["body"]["content"]
     assert content.startswith('f"')
@@ -101,6 +105,8 @@ def test_secret_is_injected_into_a_protected_environment_file() -> None:
 
 def test_service_is_network_accessible_authenticated_and_persistent() -> None:
     unit = (ROOT / "etc/systemd/opencode-server.service").read_text()
+    assert "User=opencode\n" in unit
+    assert "Group=opencode\n" in unit
     assert "EnvironmentFile=/etc/opencode_server/server.env" in unit
     assert "ExecStartPre=/usr/local/bin/opencode-server-validate" in unit
     assert "--hostname 0.0.0.0 --port 4096" in unit
@@ -109,13 +115,21 @@ def test_service_is_network_accessible_authenticated_and_persistent() -> None:
     assert "NoNewPrivileges=true" in unit
     assert "ProtectSystem=strict" in unit
 
+    installer = (ROOT / "exordos/images/install.sh").read_text()
+    assert 'SERVICE_USER="opencode"' in installer
+    assert 'SERVICE_GROUP="opencode"' in installer
+    assert "groupadd --system" in installer
+
+    bootstrap = (ROOT / "exordos/images/bootstrap.sh").read_text()
+    assert 'SERVICE_USER="opencode"' in bootstrap
+    assert 'SERVICE_GROUP="opencode"' in bootstrap
+
     health = (ROOT / "scripts/opencode-server-health").read_text()
     assert "OPENCODE_SERVER_USERNAME" in health
     assert "OPENCODE_SERVER_PASSWORD" in health
     assert "http://127.0.0.1:4096/global/health" in health
     assert "--config -" in health
 
-    bootstrap = (ROOT / "exordos/images/bootstrap.sh").read_text()
     assert bootstrap.index("source /usr/local/lib/exordos/lib_bootstrap.sh") < (
         bootstrap.index("set +x")
     )
@@ -134,6 +148,53 @@ def test_runtime_configuration_disables_automatic_mutation() -> None:
     config = json.loads((ROOT / "etc/opencode.jsonc").read_text())
     assert config["autoupdate"] is False
     assert config["share"] == "disabled"
+
+
+def test_element_workflow_builds_and_publishes_immutable_releases() -> None:
+    workflow = (ROOT / ".github/workflows/exordos-element.yml").read_text()
+    tests_workflow = (ROOT / ".github/workflows/tests.yaml").read_text()
+    publish = workflow.split("- name: Publish element", 1)[1]
+
+    assert workflow.count('"${EXORDOS_BIN}" build .') == 1
+    assert workflow.count('"${EXORDOS_BIN}" push .') == 1
+    assert (
+        workflow.count("github.event_name == 'push' && github.ref_type == 'tag'") == 1
+    )
+    assert workflow.count("if: ${{ github.event_name == 'push' }}") == 2
+    assert "actions: read" in workflow
+    assert 'workflow_id: "tests.yaml"' in workflow
+    assert "head_sha: context.sha" in workflow
+    assert 'run => run.event === "push"' in workflow
+    assert 'run => run.conclusion === "success"' in workflow
+    assert "Timed out waiting for tests" in workflow
+    assert 'GITHUB_REF_NAME}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$' in workflow
+    assert "opencode_server.raw.zst" in workflow
+    assert "zstd --test" in workflow
+    assert "EXORDOS_RELEASE_SHA256" in workflow
+    assert "PUSH_CFG" in workflow
+    assert "umask 077" in workflow
+    assert "--force" not in publish
+    assert "latest_arg=()" in publish
+    assert 'if [[ "${GITHUB_REF_TYPE}" == "tag" ]]' in publish
+    assert "latest_arg=(--latest)" in publish
+    assert '"${latest_arg[@]}"' in publish
+    assert 'branches: ["**"]' in workflow
+    assert 'branches: ["**"]' in tests_workflow
+    assert 'tags: ["*"]' in tests_workflow
+
+
+def test_element_workflow_uses_the_internal_vm_runner() -> None:
+    workflow = (ROOT / ".github/workflows/exordos-element.yml").read_text()
+
+    assert "runs-on: [self-hosted, vm]" in workflow
+    assert "command -v packer" in workflow
+    assert "setup-packer" not in workflow
+    assert "test -r /dev/kvm" in workflow
+    assert "test -w /dev/kvm" in workflow
+    assert "apt-get" not in workflow
+    assert (
+        "github.event.pull_request.head.repo.full_name != github.repository" in workflow
+    )
 
 
 def test_repository_contains_no_runtime_secret_or_internal_address() -> None:

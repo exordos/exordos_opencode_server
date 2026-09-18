@@ -1,0 +1,184 @@
+name: Exordos element
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+    tags: ["*"]
+  workflow_dispatch:
+
+concurrency:
+  group: exordos-element-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+env:
+  ARTIFACTS_PATH: output
+  EXORDOS_CFG: exordos/exordos.yaml
+
+jobs:
+  build:
+    if: >-
+      ${{ github.actor != 'dependabot[bot]' &&
+          (github.event_name != 'pull_request' ||
+           github.event.pull_request.head.repo.full_name != github.repository) }}
+    runs-on: [self-hosted, vm]
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install pinned Exordos CLI
+        env:
+          EXORDOS_RELEASE_URL: https://github.com/exordos/exordos/releases/download/3.2.10/exordos-linux
+          EXORDOS_RELEASE_SHA256: 31b3a509b0c30c4230ec0673c145167de164c6fac06f7cafac468dbf93c1651e
+        run: |
+          set -euo pipefail
+
+          command -v curl
+          command -v sha256sum
+          exordos_bin="${RUNNER_TEMP}/exordos"
+          exordos_download="${exordos_bin}.download"
+          curl --fail --location --silent --show-error \
+            --connect-timeout 30 \
+            --max-time 180 \
+            --retry 4 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --retry-max-time 600 \
+            "${EXORDOS_RELEASE_URL}" \
+            --output "${exordos_download}"
+          printf "%s  %s\n" "${EXORDOS_RELEASE_SHA256}" "${exordos_download}" \
+            | sha256sum --check --strict -
+          mv "${exordos_download}" "${exordos_bin}"
+          chmod 0755 "${exordos_bin}"
+          printf "EXORDOS_BIN=%s\n" "${exordos_bin}" >> "${GITHUB_ENV}"
+          "${exordos_bin}" version
+
+      - name: Check build prerequisites
+        run: |
+          set -euo pipefail
+
+          "${EXORDOS_BIN}" version
+          command -v packer
+          command -v qemu-img
+          command -v qemu-system-x86_64
+          command -v mkisofs
+          command -v zstd
+          test -r /dev/kvm
+          test -w /dev/kvm
+
+      - name: Validate release tag
+        if: ${{ github.event_name == 'push' && github.ref_type == 'tag' }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tags must use MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+      - name: Build element
+        run: |
+          set -euo pipefail
+
+          "${EXORDOS_BIN}" build . \
+            --exordos-cfg-file "${EXORDOS_CFG}" \
+            --output-dir "${ARTIFACTS_PATH}" \
+            --force
+
+      - name: Verify build output
+        run: |
+          set -euo pipefail
+
+          element_root="${ARTIFACTS_PATH}/exordos-elements/opencode_server"
+          mapfile -d '' version_dirs \
+            < <(find "${element_root}" -mindepth 1 -maxdepth 1 -type d -print0)
+          if [[ "${#version_dirs[@]}" -ne 1 ]]; then
+            echo "::error::expected one built opencode_server version"
+            exit 1
+          fi
+
+          element_dir="${version_dirs[0]}"
+          built_version="${element_dir##*/}"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" \
+            && "${built_version}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "::error::built version ${built_version} does not match tag ${GITHUB_REF_NAME}"
+            exit 1
+          fi
+
+          image="${element_dir}/images/opencode_server.raw.zst"
+          manifest="${element_dir}/manifests/opencode_server.yaml"
+          test -s "${element_dir}/inventory.json"
+          test -s "${manifest}"
+          test -s "${image}"
+          zstd --test "${image}"
+
+          while IFS= read -r -d '' artifact; do
+            artifact_size="$(stat --format='%s' "${artifact}")"
+            artifact_sha256="$(sha256sum "${artifact}" | cut -d ' ' -f 1)"
+            printf "%s %s bytes sha256=%s\n" \
+              "${artifact}" "${artifact_size}" "${artifact_sha256}"
+          done < <(find "${ARTIFACTS_PATH}" -type f -print0 | sort -z)
+
+      - name: Require green tests for the exact published commit
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const attempts = 40;
+            for (let attempt = 1; attempt <= attempts; attempt += 1) {
+              const response = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: "tests.yaml",
+                head_sha: context.sha,
+                per_page: 100,
+              });
+              const runs = response.data.workflow_runs.filter(
+                run => run.event === "push"
+              );
+              if (runs.some(run => run.conclusion === "success")) {
+                core.info(`Tests passed for ${context.sha}`);
+                return;
+              }
+              if (attempt < attempts) {
+                core.info(`Waiting for tests (${attempt}/${attempts})`);
+                await new Promise(resolve => setTimeout(resolve, 15000));
+              }
+            }
+            core.setFailed(`Timed out waiting for tests on ${context.sha}`);
+
+      - name: Publish element
+        if: ${{ github.event_name == 'push' }}
+        env:
+          PUSH_CFG: ${{ secrets.PUSH_CFG }}
+        run: |
+          set -euo pipefail
+
+          : "${PUSH_CFG:?Set secret PUSH_CFG to base64-encoded exordos.push.yaml content}"
+          push_cfg_path="${RUNNER_TEMP}/opencode-server-push.yaml"
+          cleanup_push_config() {
+            if [[ -f "${push_cfg_path}" ]]; then
+              : > "${push_cfg_path}"
+              unlink "${push_cfg_path}"
+            fi
+          }
+          trap cleanup_push_config EXIT
+
+          umask 077
+          printf "%s" "${PUSH_CFG}" | base64 --decode > "${push_cfg_path}"
+
+          latest_arg=()
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            latest_arg=(--latest)
+          fi
+
+          "${EXORDOS_BIN}" push . \
+            --exordos-cfg-file "${push_cfg_path}" \
+            --element-dir "${ARTIFACTS_PATH}" \
+            "${latest_arg[@]}"
