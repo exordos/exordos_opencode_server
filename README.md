@@ -54,6 +54,23 @@ documentation for [element builds](https://exordos.github.io/exordos_core/app-de
 [manifests](https://exordos.github.io/exordos_core/em/manifest.html), and
 [Secret Manager passwords](https://exordos.github.io/exordos_core/secret/passwords.html).
 
+## Release
+
+The `Exordos element` GitHub Actions workflow builds the complete VM image on
+branch pushes, external pull requests, release tags, and manual runs. Every
+branch push publishes its immutable dev version to the configured Exordos
+element repository without changing `latest`. A pushed stable SemVer tag
+(`MAJOR.MINOR.PATCH`) publishes the stable version and updates `latest`. Both
+publication paths require `tests.yaml` to pass for the exact same commit.
+
+Publication uses the repository or organization Actions secret `PUSH_CFG`. Its
+value must be the base64-encoded contents of an `exordos.push.yaml` file. All
+published versions are immutable: the workflow deliberately does not use
+`exordos push --force`. Internal pull request events skip a duplicate image
+build because the same commit is already built and published by its branch-push
+run. External pull requests and manual runs build and verify the complete image
+but do not publish it.
+
 ## Runtime behavior
 
 - OpenCode automatic updates and session sharing are disabled.

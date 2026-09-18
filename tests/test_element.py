@@ -150,6 +150,53 @@ def test_runtime_configuration_disables_automatic_mutation() -> None:
     assert config["share"] == "disabled"
 
 
+def test_element_workflow_builds_and_publishes_immutable_releases() -> None:
+    workflow = (ROOT / ".github/workflows/exordos-element.yml").read_text()
+    tests_workflow = (ROOT / ".github/workflows/tests.yaml").read_text()
+    publish = workflow.split("- name: Publish element", 1)[1]
+
+    assert workflow.count('"${EXORDOS_BIN}" build .') == 1
+    assert workflow.count('"${EXORDOS_BIN}" push .') == 1
+    assert (
+        workflow.count("github.event_name == 'push' && github.ref_type == 'tag'") == 1
+    )
+    assert workflow.count("if: ${{ github.event_name == 'push' }}") == 2
+    assert "actions: read" in workflow
+    assert 'workflow_id: "tests.yaml"' in workflow
+    assert "head_sha: context.sha" in workflow
+    assert 'run => run.event === "push"' in workflow
+    assert 'run => run.conclusion === "success"' in workflow
+    assert "Timed out waiting for tests" in workflow
+    assert 'GITHUB_REF_NAME}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$' in workflow
+    assert "opencode_server.raw.zst" in workflow
+    assert "zstd --test" in workflow
+    assert "EXORDOS_RELEASE_SHA256" in workflow
+    assert "PUSH_CFG" in workflow
+    assert "umask 077" in workflow
+    assert "--force" not in publish
+    assert "latest_arg=()" in publish
+    assert 'if [[ "${GITHUB_REF_TYPE}" == "tag" ]]' in publish
+    assert "latest_arg=(--latest)" in publish
+    assert '"${latest_arg[@]}"' in publish
+    assert 'branches: ["**"]' in workflow
+    assert 'branches: ["**"]' in tests_workflow
+    assert 'tags: ["*"]' in tests_workflow
+
+
+def test_element_workflow_uses_the_internal_vm_runner() -> None:
+    workflow = (ROOT / ".github/workflows/exordos-element.yml").read_text()
+
+    assert "runs-on: [self-hosted, vm]" in workflow
+    assert "command -v packer" in workflow
+    assert "setup-packer" not in workflow
+    assert "test -r /dev/kvm" in workflow
+    assert "test -w /dev/kvm" in workflow
+    assert "apt-get" not in workflow
+    assert (
+        "github.event.pull_request.head.repo.full_name != github.repository" in workflow
+    )
+
+
 def test_repository_contains_no_runtime_secret_or_internal_address() -> None:
     forbidden = (
         "OPENCODE_SERVER_PASSWORD=" + "opencode",
