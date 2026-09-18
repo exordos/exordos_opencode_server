@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install "tox>=4.58,<5" "tox-uv>=1.29,<2"
+      - run: tox -e py
+
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "tox>=4.58,<5" "tox-uv>=1.29,<2"
+      - run: tox -e ruff
+      - run: >-
+          bash -n
+          exordos/images/install.sh
+          exordos/images/bootstrap.sh
+          scripts/opencode-server-health
+          scripts/opencode-server-reload
+          scripts/opencode-server-validate

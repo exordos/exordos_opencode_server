@@ -1,0 +1,30 @@
+build:
+  deps:
+    - dst: /opt/exordos_opencode_server
+      path:
+        src: ../../exordos_opencode_server
+      exclude:
+        - .git
+        - .mypy_cache
+        - .pytest_cache
+        - .ruff_cache
+        - .tox
+        - .venv
+        - __pycache__
+        - "*/__pycache__"
+        - "*.egg-info"
+        - "*.pyc"
+        - build
+        - dist
+        - output
+
+  elements:
+    - manifest: manifests/opencode_server.yaml.j2
+      images:
+        - name: opencode_server
+          format: zst
+          profile: exordos_base
+          profile_version: "1.2.1"
+          script: images/install.sh
+          override:
+            disk_size: "8G"

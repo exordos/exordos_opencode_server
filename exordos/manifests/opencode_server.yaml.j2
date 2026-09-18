@@ -1,0 +1,95 @@
+name: "opencode_server"
+description: "Authenticated OpenCode Server with persistent state"
+schema_version: 1
+version: "{{ version }}"
+api_version: "v1"
+
+requirements:
+  core:
+    from_version: "0.0.0"
+
+resources:
+  $core.compute.nodes:
+    opencode_server:
+      name: "opencode-server"
+      description: "OpenCode Server and persistent workspace"
+      project_id: "{{ project_id }}"
+      cores: 2
+      ram: 4096
+      disk_spec:
+        kind: "disks"
+        disks:
+          - label: "root"
+            size: 8
+            image: "{{ images['opencode_server'] }}"
+          - label: "data"
+            size: 20
+
+  $core.secret.passwords:
+    opencode_server_password:
+      name: "opencode-server-password"
+      description: "OpenCode Server Basic Auth password"
+      project_id: "{{ project_id }}"
+      method: "AUTO_URL_SAFE"
+      constructor:
+        kind: "plain"
+      default_length: 48
+
+  $core.vs.variables:
+    opencode_server_endpoint:
+      name: "opencode_server_endpoint"
+      project_id: "{{ project_id }}"
+      setter:
+        kind: "selector"
+        selector_strategy: "latest"
+    opencode_server_login:
+      name: "opencode_server_login"
+      project_id: "{{ project_id }}"
+      setter:
+        kind: "selector"
+        selector_strategy: "latest"
+
+  $core.vs.values:
+    opencode_server_endpoint:
+      name: "OpenCode Server endpoint"
+      project_id: "{{ project_id }}"
+      read_only: true
+      variable: $core.vs.variables.$opencode_server_endpoint:uuid
+      value: f"http://{$core.compute.nodes.$opencode_server:default_network:ipv4}:4096"
+    opencode_server_login:
+      name: "OpenCode Server login"
+      project_id: "{{ project_id }}"
+      read_only: true
+      variable: $core.vs.variables.$opencode_server_login:uuid
+      value: "opencode"
+
+  $core.config.configs:
+    opencode_server_environment:
+      project_id: "{{ project_id }}"
+      path: /etc/opencode_server/server.env
+      mode: "0640"
+      owner: root
+      group: opencode_server
+      target:
+        kind: node
+        node: $core.compute.nodes.$opencode_server:uuid
+      on_change:
+        kind: shell
+        command: /usr/local/bin/opencode-server-reload
+      body:
+        kind: text
+        content: |
+          f"OPENCODE_SERVER_USERNAME={$core.vs.variables.$opencode_server_login:value}
+          OPENCODE_SERVER_PASSWORD={$core.secret.passwords.$opencode_server_password:value}
+          "
+
+exports:
+  endpoint:
+    kind: "resource"
+    link: "$core.vs.variables.$opencode_server_endpoint"
+  login:
+    kind: "resource"
+    link: "$core.vs.variables.$opencode_server_login"
+  password:
+    kind: "resource"
+    link: "$core.secret.passwords.$opencode_server_password"

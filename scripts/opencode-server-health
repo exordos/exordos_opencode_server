@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source /etc/opencode_server/server.env
+
+response=$(
+    printf 'user = "%s:%s"\n' \
+        "$OPENCODE_SERVER_USERNAME" \
+        "$OPENCODE_SERVER_PASSWORD" \
+    | curl \
+        --config - \
+        --fail \
+        --silent \
+        --show-error \
+        --max-time 10 \
+        http://127.0.0.1:4096/global/health
+)
+
+grep -q '"healthy":true' <<<"$response"
