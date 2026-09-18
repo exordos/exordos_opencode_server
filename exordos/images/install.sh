@@ -8,7 +8,8 @@ set -euo pipefail
 APP_DIR="/opt/exordos_opencode_server"
 BOOTSTRAP_DIR="/var/lib/exordos/bootstrap/scripts"
 CONFIG_DIR="/etc/opencode_server"
-SERVICE_USER="opencode_server"
+SERVICE_USER="opencode"
+SERVICE_GROUP="opencode"
 STATE_DIR="/var/lib/opencode_server"
 SYSTEMD_DIR="/etc/systemd/system"
 OPENCODE_VERSION="1.18.31"
@@ -27,9 +28,14 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get \
     ca-certificates \
     curl
 
+if ! getent group "$SERVICE_GROUP" >/dev/null; then
+    sudo groupadd --system "$SERVICE_GROUP"
+fi
+
 if ! getent passwd "$SERVICE_USER" >/dev/null; then
     sudo useradd \
         --system \
+        --gid "$SERVICE_GROUP" \
         --home-dir "$STATE_DIR" \
         --create-home \
         --shell /usr/sbin/nologin \
@@ -53,8 +59,8 @@ tar -xzf "$temporary_dir/$OPENCODE_ASSET" -C "$temporary_dir"
 sudo install -o root -g root -m 0755 \
     "$temporary_dir/opencode" /usr/local/bin/opencode
 
-sudo install -d -o root -g "$SERVICE_USER" -m 0750 "$CONFIG_DIR"
-sudo install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 \
+sudo install -d -o root -g "$SERVICE_GROUP" -m 0750 "$CONFIG_DIR"
+sudo install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 \
     "$STATE_DIR" \
     "$STATE_DIR/cache" \
     "$STATE_DIR/config" \

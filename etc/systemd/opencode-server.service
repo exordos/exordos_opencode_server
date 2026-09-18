@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=opencode_server
-Group=opencode_server
+User=opencode
+Group=opencode
 WorkingDirectory=/var/lib/opencode_server/workspace
 Environment=HOME=/var/lib/opencode_server
 Environment=XDG_CONFIG_HOME=/var/lib/opencode_server/config
