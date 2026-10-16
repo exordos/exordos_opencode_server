@@ -31,8 +31,5 @@ jobs:
       - run: tox -e ruff
       - run: >-
           bash -n
-          exordos/images/install.sh
-          exordos/images/bootstrap.sh
-          scripts/opencode-server-health
-          scripts/opencode-server-reload
-          scripts/opencode-server-validate
+          exordos/images/build_wheel.sh
+          exordos/images/worker_install.sh

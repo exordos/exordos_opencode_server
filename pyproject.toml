@@ -1,37 +1,63 @@
 [project]
-name = "exordos-opencode-server"
-description = "Exordos element for an authenticated OpenCode Server"
+name = "exordos_opencode_server"
+description = "MetaPaaS plugin serving disposable OpenCode build workers from a hot pool"
 readme = "README.md"
 authors = [{name = "Genesis Corporation", email = "cassi@exordos.com"}]
-version = "0.1.0"
+dynamic = ["version"]
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "oslo.config>=3.22.2,<10.0.0",
+    "restalchemy>=16.0.3,<17.0.0",
+    "gcl_iam>=1.0.3,<2.0.0",
+    "gcl_looper>=1.2.3,<2.0.0",
+    "gcl_sdk>=3.6.0,<4.0.0",
+    "exordos_metapaas>=1.2.0,<2.0.0",
+]
+
+[project.entry-points."exordos_metapaas_paas"]
+opencode = "exordos_opencode_server.definition:OpencodeDefinition"
 
 [project.urls]
 homepage = "https://github.com/exordos/exordos_opencode_server/"
 
 [project.optional-dependencies]
 test = [
+    "coverage>=4.0",
     "Jinja2>=3.1.0,<4.0.0",
     "PyYAML>=6.0.0,<7.0.0",
-    "pytest>=9.0.0,<10.0.0",
+    "pytest>=8.0.0,<10.0.0",
 ]
 ruff = [
     "ruff>=0.14.0,<1.0.0",
 ]
 
 [build-system]
-requires = ["setuptools>=83.0.0"]
+requires = ["setuptools>=75.3.3", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-py-modules = []
+[tool.setuptools_scm]
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["exordos_opencode_server*"]
+
+[tool.setuptools.package-data]
+"exordos_opencode_server" = ["migrations/*.py"]
 
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+exclude = [".venv", "build", "dist", "output", "__pycache__"]
 
 [tool.ruff.lint]
 select = ["B", "E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.coverage.run]
+branch = true
+source = ["exordos_opencode_server"]
+omit = ["exordos_opencode_server/tests/*"]

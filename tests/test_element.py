@@ -1,218 +1,221 @@
-from __future__ import annotations
+#    Copyright 2026 Genesis Corporation.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License"); you may
+#    not use this file except in compliance with the License. You may obtain
+#    a copy of the License at
+#
+#         http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+#    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+#    License for the specific language governing permissions and limitations
+#    under the License.
+
+"""Element regression tests: the manifest and the build descriptor."""
 
 import json
-from pathlib import Path
+import pathlib
+import re
 
+import jinja2
+import pytest
 import yaml
-from jinja2 import Environment, StrictUndefined
 
-ROOT = Path(__file__).parents[1]
-PROJECT_ID = "12345678-c625-4fee-81d5-f691897b8142"
+from exordos_opencode_server import constants as c
+from exordos_opencode_server.controlplane.api import controllers
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+EXORDOS_DIR = ROOT / "exordos"
+METAPAAS_PROJECT = "4d657461-0000-0000-0000-000000000002"
+METAPAAS_OWNER_ROLE = "726f6c65-0000-0000-0000-000000000002"
+EM_PROJECT = "12345678-c625-4fee-81d5-f691897b8142"
+# Fixed UUIDs of Core's secret.ssh_key.* permissions.
+CORE_SSH_KEY_PERMISSIONS = {
+    "read": "42079bc1-48b3-4ffd-8131-35d1e4e5be05",
+    "create": "e491736f-2749-42f7-ad39-bea4362cc38e",
+    "update": "de7298aa-45d0-442f-96a2-efc84a40c56d",
+    "delete": "23102ef6-c168-4490-8cd1-4b1a6903964b",
+}
+
+# Every action the controllers enforce, per policy.
+ENFORCED = {
+    "version": {"read"},
+    "pool": {"create", "read", "update", "delete", "purge_idle"},
+    "worker": {"read"},
+    "lease": {"create", "read", "delete", "release"},
+}
 
 
-def _render_manifest() -> dict[str, object]:
-    source = (ROOT / "exordos/manifests/opencode_server.yaml.j2").read_text()
-    rendered = (
-        Environment(undefined=StrictUndefined)
-        .from_string(source)
-        .render(
-            version="0.1.0",
-            images={"opencode_server": "https://repo.example.invalid/image.raw.zst"},
-        )
+def render(name, **kwargs):
+    template = (EXORDOS_DIR / "manifests" / name).read_text()
+    rendered = jinja2.Template(template, undefined=jinja2.StrictUndefined).render(
+        version="0.0.0", **kwargs
     )
-    manifest = yaml.safe_load(rendered)
-    assert isinstance(manifest, dict)
-    return manifest
+    return yaml.safe_load(rendered)
 
 
-def test_build_downloads_a_pinned_upstream_release() -> None:
-    config = yaml.safe_load((ROOT / "exordos/exordos.yaml").read_text())
-    assert config["build"]["deps"][0]["path"]["src"] == (
-        "../../exordos_opencode_server"
+@pytest.fixture(scope="module")
+def manifest():
+    return render(
+        "opencode_server.yaml.j2",
+        artifacts={"pypi_package": "urn:artifacts:wheel"},
+        images={"opencode_worker": "urn:images:worker"},
     )
-    element = config["build"]["elements"][0]
-    assert element["manifest"] == "manifests/opencode_server.yaml.j2"
-    image = element["images"][0]
-    assert image["name"] == "opencode_server"
-    assert image["profile"] == "exordos_base"
-
-    installer = (ROOT / "exordos/images/install.sh").read_text()
-    assert 'OPENCODE_VERSION="1.18.31"' in installer
-    assert 'OPENCODE_SHA256="b283e8db' in installer
-    assert "github.com/anomalyco/opencode/releases/download/v" in installer
-    assert "sha256sum --check --strict" in installer
-    assert "/usr/local/bin/opencode --version" not in installer
-    assert '"$temporary_dir/opencode" --version' in installer
 
 
-def test_manifest_exports_connection_resources() -> None:
-    manifest = _render_manifest()
-    assert manifest["name"] == "opencode_server"
-    resources = manifest["resources"]
+@pytest.fixture(scope="module")
+def opencode_halogen_qwen38():
+    return render("opencode_halogen_qwen38.yaml.j2")
 
-    for collection in resources.values():
-        for resource in collection.values():
-            assert resource["project_id"] == PROJECT_ID
 
-    node = resources["$core.compute.nodes"]["opencode_server"]
-    assert node["cores"] == 2
-    assert node["ram"] == 4096
-    assert node["disk_spec"]["disks"][1] == {"label": "data", "size": 20}
+@pytest.fixture(scope="module")
+def build():
+    return yaml.safe_load((EXORDOS_DIR / "exordos.yaml").read_text())["build"]
 
-    secret = resources["$core.secret.passwords"]["opencode_server_password"]
-    assert secret["method"] == "AUTO_URL_SAFE"
-    assert secret["constructor"] == {"kind": "plain"}
-    assert secret["default_length"] == 48
-    assert "value" not in secret
 
-    values = resources["$core.vs.values"]
-    assert values["opencode_server_endpoint"]["read_only"] is True
-    assert values["opencode_server_endpoint"]["value"] == (
-        'f"http://{$core.compute.nodes.$opencode_server:default_network:ipv4}:4096"'
-    )
-    assert values["opencode_server_login"]["value"] == "opencode"
+def test_identity(manifest):
+    assert manifest["name"] == c.ELEMENT_NAME
+    assert set(manifest["requirements"]) == {"core", "metapaas"}
 
-    assert manifest["exports"] == {
-        "endpoint": {
-            "kind": "resource",
-            "link": "$core.vs.variables.$opencode_server_endpoint",
-        },
-        "login": {
-            "kind": "resource",
-            "link": "$core.vs.variables.$opencode_server_login",
-        },
-        "password": {
-            "kind": "resource",
-            "link": "$core.secret.passwords.$opencode_server_password",
-        },
+
+def test_raw_template_is_valid_yaml():
+    # `exordos build` reads the element name from the unrendered template,
+    # so it must stay valid YAML: no Jinja statements, only expressions.
+    template = (EXORDOS_DIR / "manifests" / "opencode_server.yaml.j2").read_text()
+    assert "{%" not in template
+    assert yaml.safe_load(template)["name"] == c.ELEMENT_NAME
+
+
+def test_registers_plugin(manifest):
+    (slug, paas_type), *rest = manifest["resources"]["$metapaas.types"].items()
+    assert not rest
+    assert slug == c.SLUG
+    assert paas_type["name"] == c.SLUG
+    assert paas_type["element_name"] == c.ELEMENT_NAME
+    assert paas_type["package"] == "urn:artifacts:wheel"
+    assert paas_type["project_id"] == METAPAAS_PROJECT
+
+
+def test_permissions_match_controllers(manifest):
+    names = {p["name"] for p in manifest["resources"]["$core.iam.permissions"].values()}
+    expected = {
+        f"{c.POLICY_SERVICE_NAME}.{policy}.{action}"
+        for policy, actions in ENFORCED.items()
+        for action in actions
     }
+    assert names == expected
+    for controller in (
+        controllers.VersionController,
+        controllers.PoolController,
+        controllers.WorkerController,
+        controllers.LeaseController,
+    ):
+        assert controller.__policy_name__ in ENFORCED
 
 
-def test_secret_is_injected_into_a_protected_environment_file() -> None:
-    resources = _render_manifest()["resources"]
-    config = resources["$core.config.configs"]["opencode_server_environment"]
-    assert config["path"] == "/etc/opencode_server/server.env"
-    assert config["mode"] == "0640"
-    assert config["owner"] == "root"
-    assert config["group"] == "opencode"
-    assert config["body"]["kind"] == "text"
-    content = config["body"]["content"]
-    assert content.startswith('f"')
-    assert "$core.secret.passwords.$opencode_server_password:value" in content
-    assert "OPENCODE_SERVER_USERNAME=" in content
-    assert "OPENCODE_SERVER_PASSWORD=" in content
+def test_every_permission_is_bound(manifest):
+    resources = manifest["resources"]
+    permissions = resources["$core.iam.permissions"]
+    bindings = resources["$core.iam.permissionbinding"]
+    assert len(bindings) == len(permissions) + len(CORE_SSH_KEY_PERMISSIONS)
+    for key in permissions:
+        binding = bindings[f"{key}_binding"]
+        assert binding["permission"] == f"$core.iam.permissions.${key}:uuid"
+        assert binding["role"] == METAPAAS_OWNER_ROLE
+        assert binding["project_id"] == METAPAAS_PROJECT
 
 
-def test_service_is_network_accessible_authenticated_and_persistent() -> None:
-    unit = (ROOT / "etc/systemd/opencode-server.service").read_text()
-    assert "User=opencode\n" in unit
-    assert "Group=opencode\n" in unit
-    assert "EnvironmentFile=/etc/opencode_server/server.env" in unit
-    assert "ExecStartPre=/usr/local/bin/opencode-server-validate" in unit
-    assert "--hostname 0.0.0.0 --port 4096" in unit
-    assert "WorkingDirectory=/var/lib/opencode_server/workspace" in unit
-    assert "ReadWritePaths=/var/lib/opencode_server" in unit
-    assert "NoNewPrivileges=true" in unit
-    assert "ProtectSystem=strict" in unit
+def test_metapaas_user_manages_core_ssh_keys(manifest):
+    # The infra agent writes /v1/secret/ssh_keys/ as the metapaas user,
+    # whose owner role lacks secret.ssh_key.* in Core.
+    bindings = manifest["resources"]["$core.iam.permissionbinding"]
+    for action, permission in CORE_SSH_KEY_PERMISSIONS.items():
+        binding = bindings[f"core_ssh_key_{action}_binding"]
+        assert binding["permission"] == permission
+        assert binding["role"] == METAPAAS_OWNER_ROLE
+        assert binding["project_id"] == METAPAAS_PROJECT
 
-    installer = (ROOT / "exordos/images/install.sh").read_text()
-    assert 'SERVICE_USER="opencode"' in installer
-    assert 'SERVICE_GROUP="opencode"' in installer
-    assert "groupadd --system" in installer
 
-    bootstrap = (ROOT / "exordos/images/bootstrap.sh").read_text()
-    assert 'SERVICE_USER="opencode"' in bootstrap
-    assert 'SERVICE_GROUP="opencode"' in bootstrap
-
-    health = (ROOT / "scripts/opencode-server-health").read_text()
-    assert "OPENCODE_SERVER_USERNAME" in health
-    assert "OPENCODE_SERVER_PASSWORD" in health
-    assert "http://127.0.0.1:4096/global/health" in health
-    assert "--config -" in health
-
-    assert bootstrap.index("source /usr/local/lib/exordos/lib_bootstrap.sh") < (
-        bootstrap.index("set +x")
-    )
-    assert "find_persistent_disk" in bootstrap
-    assert "migrate_to_persistent" in bootstrap
-    assert 'mountpoint --quiet "$STATE_DIR"' in bootstrap
-    assert "opencode-server-bootstrap-v1-complete" in bootstrap
-    assert "OPENCODE_SERVER_USERNAME=opencode" in bootstrap
-    assert "opencode-server-health" in bootstrap
-    assert bootstrap.index("opencode-server-health") < bootstrap.rindex(
-        '"$BOOTSTRAP_COMPLETE"'
+def test_version_catalog(manifest):
+    versions = manifest["resources"]["$opencode_server.types.opencode.versions"]
+    assert versions == {
+        "default": {
+            "name": "default",
+            "description": EM_PROJECT,
+            "image": "urn:images:worker",
+        }
+    }
+    assert manifest["exports"]["version"]["link"] == (
+        "$opencode_server.types.opencode.versions.$default"
     )
 
 
-def test_runtime_configuration_disables_automatic_mutation() -> None:
-    config = json.loads((ROOT / "etc/opencode.jsonc").read_text())
+def test_exports_client_permissions(manifest):
+    permissions = manifest["resources"]["$core.iam.permissions"]
+    for name in ("lease_create", "lease_read", "lease_delete", "lease_release"):
+        assert name in permissions
+        assert manifest["exports"][name]["link"] == f"$core.iam.permissions.${name}"
+
+
+def test_build_descriptor(build):
+    pool_element, element = build["elements"]
+    assert pool_element == {"manifest": "manifests/opencode_halogen_qwen38.yaml.j2"}
+    assert element["manifest"] == "manifests/opencode_server.yaml.j2"
+    (artifact,) = element["artifacts"]
+    assert artifact["name"] == "pypi_package"
+    assert (EXORDOS_DIR / artifact["script"]).is_file()
+    (image,) = element["images"]
+    assert image["name"] == "opencode_worker"
+    assert (EXORDOS_DIR / image["script"]).is_file()
+
+
+def test_worker_image_pins_downloads():
+    script = (EXORDOS_DIR / "images" / "worker_install.sh").read_text()
+    for name in ("OPENCODE", "EXORDOS", "PACKER"):
+        assert re.search(rf'^{name}_VERSION="[0-9.]+"$', script, re.MULTILINE)
+        assert re.search(rf'^{name}_SHA256="[0-9a-f]{{64}}"$', script, re.MULTILINE)
+    assert "sha256sum --check --strict" in script
+
+
+def test_opencode_runtime_config():
+    text = (ROOT / "etc" / "opencode.jsonc").read_text()
+    config = json.loads(re.sub(r"^\s*//.*$", "", text, flags=re.MULTILINE))
     assert config["autoupdate"] is False
     assert config["share"] == "disabled"
 
 
-def test_element_workflow_builds_and_publishes_immutable_releases() -> None:
-    workflow = (ROOT / ".github/workflows/exordos-element.yml").read_text()
-    tests_workflow = (ROOT / ".github/workflows/tests.yaml").read_text()
-    publish = workflow.split("- name: Publish element", 1)[1]
-
-    assert workflow.count('"${EXORDOS_BIN}" build .') == 1
-    assert workflow.count('"${EXORDOS_BIN}" push .') == 1
-    assert (
-        workflow.count("github.event_name == 'push' && github.ref_type == 'tag'") == 1
-    )
-    assert workflow.count("if: ${{ github.event_name == 'push' }}") == 2
-    assert "actions: read" in workflow
-    assert 'workflow_id: "tests.yaml"' in workflow
-    assert "head_sha: context.sha" in workflow
-    assert 'run => run.event === "push"' in workflow
-    assert 'run => run.conclusion === "success"' in workflow
-    assert "Timed out waiting for tests" in workflow
-    assert 'GITHUB_REF_NAME}" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$' in workflow
-    assert "opencode_server.raw.zst" in workflow
-    assert "zstd --test" in workflow
-    assert "EXORDOS_RELEASE_SHA256" in workflow
-    assert "PUSH_CFG" in workflow
-    assert "umask 077" in workflow
-    assert "--force" not in publish
-    assert "latest_arg=()" in publish
-    assert 'if [[ "${GITHUB_REF_TYPE}" == "tag" ]]' in publish
-    assert "latest_arg=(--latest)" in publish
-    assert '"${latest_arg[@]}"' in publish
-    assert 'branches: ["**"]' in workflow
-    assert 'branches: ["**"]' in tests_workflow
-    assert 'tags: ["*"]' in tests_workflow
+def test_opencode_halogen_qwen38_requires_the_element(opencode_halogen_qwen38):
+    assert opencode_halogen_qwen38["name"] == "opencode_halogen_qwen38"
+    assert set(opencode_halogen_qwen38["requirements"]) == {"core", c.ELEMENT_NAME}
+    assert opencode_halogen_qwen38["imports"]["version"] == {
+        "element": f"${c.ELEMENT_NAME}",
+        "kind": "resource",
+        "link": f"${c.ELEMENT_NAME}.types.{c.SLUG}.versions.$default",
+    }
 
 
-def test_element_workflow_uses_the_internal_vm_runner() -> None:
-    workflow = (ROOT / ".github/workflows/exordos-element.yml").read_text()
+def test_opencode_halogen_qwen38_pool(opencode_halogen_qwen38):
+    pools = opencode_halogen_qwen38["resources"][
+        f"${c.ELEMENT_NAME}.types.{c.SLUG}.pools"
+    ]
+    pool = pools["halogen_qwen38"]
+    # The core-agent syncs only the pools marked with the EM project id.
+    assert pool["description"] == EM_PROJECT
+    assert pool["image"] == "$opencode_halogen_qwen38.imports.$version:image"
+    assert "version" not in pool
+    assert (pool["cores"], pool["ram"], pool["hot_size"]) == (6, 8192, 1)
+    config = pool["opencode_config"]
+    provider = config["provider"]["halogen"]
+    assert config["model"] == "halogen/" + next(iter(provider["models"]))
+    assert provider["options"] == {"baseURL": "$core.vs.variables.$base_url:value"}
 
-    assert "runs-on: [self-hosted, vm]" in workflow
-    assert "command -v packer" in workflow
-    assert "setup-packer" not in workflow
-    assert "test -r /dev/kvm" in workflow
-    assert "test -w /dev/kvm" in workflow
-    assert "apt-get" not in workflow
-    assert (
-        "github.event.pull_request.head.repo.full_name != github.repository" in workflow
-    )
 
-
-def test_repository_contains_no_runtime_secret_or_internal_address() -> None:
-    forbidden = (
-        "OPENCODE_SERVER_PASSWORD=" + "opencode",
-        ".".join(("192", "168", "")),
-        ".".join(("10", "20", "")),
-    )
-    for path in ROOT.rglob("*"):
-        if not path.is_file() or ".git" in path.parts or ".venv" in path.parts:
-            continue
-        relative_parts = path.relative_to(ROOT).parts
-        if relative_parts[0] in {"build", "dist", "output"}:
-            continue
-        if any(part.startswith(".") for part in relative_parts):
-            continue
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        assert not any(value in content for value in forbidden), path
+def test_opencode_halogen_qwen38_endpoint_is_a_runtime_variable(
+    opencode_halogen_qwen38,
+):
+    # No endpoint is baked into the published artifact.
+    variable = opencode_halogen_qwen38["resources"]["$core.vs.variables"]["base_url"]
+    assert variable["name"] == "opencode_halogen_qwen38_base_url"
+    assert variable["project_id"] == EM_PROJECT
+    assert variable["setter"] == {"kind": "selector", "selector_strategy": "latest"}
