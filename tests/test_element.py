@@ -28,7 +28,8 @@ from exordos_opencode_server.controlplane.api import controllers
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 EXORDOS_DIR = ROOT / "exordos"
 METAPAAS_PROJECT = "4d657461-0000-0000-0000-000000000002"
-METAPAAS_OWNER_ROLE = "726f6c65-0000-0000-0000-000000000002"
+METAPAAS_USER = "4d657461-0000-0000-0000-000000000001"
+OWNER_ROLE = "726f6c65-0000-0000-0000-000000000002"
 EM_PROJECT = "12345678-c625-4fee-81d5-f691897b8142"
 # Fixed UUIDs of Core's secret.ssh_key.* permissions.
 CORE_SSH_KEY_PERMISSIONS = {
@@ -114,27 +115,65 @@ def test_permissions_match_controllers(manifest):
         assert controller.__policy_name__ in ENFORCED
 
 
-def test_every_permission_is_bound(manifest):
-    resources = manifest["resources"]
-    permissions = resources["$core.iam.permissions"]
-    bindings = resources["$core.iam.permissionbinding"]
-    assert len(bindings) == len(permissions) + len(CORE_SSH_KEY_PERMISSIONS)
-    for key in permissions:
-        binding = bindings[f"{key}_binding"]
-        assert binding["permission"] == f"$core.iam.permissions.${key}:uuid"
-        assert binding["role"] == METAPAAS_OWNER_ROLE
-        assert binding["project_id"] == METAPAAS_PROJECT
+def _granted(manifest, role):
+    """The permissions bound to one of the element's roles."""
+    bindings = manifest["resources"]["$core.iam.permissionbinding"].values()
+    return {
+        b["permission"]
+        for b in bindings
+        if b["role"] == f"$core.iam.roles.${role}:uuid"
+    }
 
 
-def test_metapaas_user_manages_core_ssh_keys(manifest):
+def _local(*keys):
+    return {f"$core.iam.permissions.${key}:uuid" for key in keys}
+
+
+def test_nothing_is_bound_to_the_owner_role(manifest):
+    # Core grants a role's permissions in every project the role is held
+    # in, and every project owner holds the owner role: binding to it would
+    # let any of them administer the global pools.
+    bindings = manifest["resources"]["$core.iam.permissionbinding"].values()
+    roles = set(manifest["resources"]["$core.iam.roles"])
+    assert roles == {"opencode_admin", "opencode_lease_client", "opencode_infra"}
+    for binding in bindings:
+        assert binding["role"] != OWNER_ROLE
+        assert binding["role"] in {f"$core.iam.roles.${r}:uuid" for r in roles}
+
+
+def test_admin_role_has_every_permission(manifest):
+    permissions = manifest["resources"]["$core.iam.permissions"]
+    assert _granted(manifest, "opencode_admin") == _local(*permissions)
+
+
+def test_lease_client_role(manifest):
+    assert _granted(manifest, "opencode_lease_client") == _local(
+        "version_read",
+        "pool_read",
+        "lease_create",
+        "lease_read",
+        "lease_delete",
+        "lease_release",
+    )
+
+
+def test_infra_role_manages_core_ssh_keys(manifest):
     # The infra agent writes /v1/secret/ssh_keys/ as the metapaas user,
     # whose owner role lacks secret.ssh_key.* in Core.
-    bindings = manifest["resources"]["$core.iam.permissionbinding"]
-    for action, permission in CORE_SSH_KEY_PERMISSIONS.items():
-        binding = bindings[f"core_ssh_key_{action}_binding"]
-        assert binding["permission"] == permission
-        assert binding["role"] == METAPAAS_OWNER_ROLE
-        assert binding["project_id"] == METAPAAS_PROJECT
+    assert _granted(manifest, "opencode_infra") == set(
+        CORE_SSH_KEY_PERMISSIONS.values()
+    )
+
+
+def test_metapaas_user_roles(manifest):
+    bindings = manifest["resources"]["$core.iam.rolebinding"]
+    assert {b["role"] for b in bindings.values()} == {
+        "$core.iam.roles.$opencode_admin:uuid",
+        "$core.iam.roles.$opencode_infra:uuid",
+    }
+    for binding in bindings.values():
+        assert binding["user"] == METAPAAS_USER
+        assert binding["project"] == METAPAAS_PROJECT
 
 
 def test_version_catalog(manifest):
@@ -151,11 +190,13 @@ def test_version_catalog(manifest):
     )
 
 
-def test_exports_client_permissions(manifest):
-    permissions = manifest["resources"]["$core.iam.permissions"]
-    for name in ("lease_create", "lease_read", "lease_delete", "lease_release"):
-        assert name in permissions
-        assert manifest["exports"][name]["link"] == f"$core.iam.permissions.${name}"
+def test_exports_roles(manifest):
+    exports = manifest["exports"]
+    assert exports["lease_client_role"] == {
+        "link": "$core.iam.roles.$opencode_lease_client"
+    }
+    assert exports["admin_role"] == {"link": "$core.iam.roles.$opencode_admin"}
+    assert set(exports) == {"version", "lease_client_role", "admin_role"}
 
 
 def test_build_descriptor(build):
@@ -176,6 +217,18 @@ def test_worker_image_pins_downloads():
         assert re.search(rf'^{name}_VERSION="[0-9.]+"$', script, re.MULTILINE)
         assert re.search(rf'^{name}_SHA256="[0-9a-f]{{64}}"$', script, re.MULTILINE)
     assert "sha256sum --check --strict" in script
+
+
+def test_worker_image_preinstalls_pinned_packer_plugins():
+    script = (EXORDOS_DIR / "images" / "worker_install.sh").read_text()
+    for name, source in (
+        ("SSHKEY", "github.com/ivoronin/sshkey"),
+        ("QEMU", "github.com/hashicorp/qemu"),
+    ):
+        assert re.search(
+            rf'^PACKER_{name}_PLUGIN_VERSION="[0-9.]+"$', script, re.MULTILINE
+        )
+        assert f"packer plugins install \\\n    {source} " in script
 
 
 def test_opencode_runtime_config():

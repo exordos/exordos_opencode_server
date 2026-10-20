@@ -32,6 +32,12 @@ PACKER_SHA256="34fe48d0d5f99670af15d8a3b581db7ce9d08093ce37240d7c7b996de7947275"
 PACKER_ASSET="packer_${PACKER_VERSION}_linux_amd64.zip"
 PACKER_URL="https://hashicorp-releases.yandexcloud.net/packer/${PACKER_VERSION}/${PACKER_ASSET}"
 
+# Packer plugins required by the exordos_base build profile. `packer plugins
+# install` verifies the release checksum, so builds on a worker do not
+# download them at the first `exordos build`.
+PACKER_SSHKEY_PLUGIN_VERSION="1.4.0"
+PACKER_QEMU_PLUGIN_VERSION="1.1.3"
+
 GO_VERSION="1.27.2"
 GO_SHA256="ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5"
 GO_ASSET="go${GO_VERSION}.linux-amd64.tar.gz"
@@ -133,6 +139,13 @@ sudo install -d -o "$WORKER_USER" -g "$WORKER_USER" -m 0700 \
     "$WORKER_HOME/.config" \
     "$WORKER_HOME/.config/opencode"
 
+# /tmp on the disk. systemd mounts it as a tmpfs of half the RAM with a
+# per-user quota, and image builds put their disks there (packer's
+# output directory, `exordos build`'s temporary directories): a quota
+# that runs out on the host shows inside the build VM as ENOSPC, on a
+# disk that is nowhere near full.
+sudo systemctl mask tmp.mount
+
 # Key-only SSH.
 sudo install -d -o root -g root -m 0755 /etc/ssh/sshd_config.d
 printf '%s\n' \
@@ -143,10 +156,21 @@ printf '%s\n' \
 sudo install -d -o root -g root -m 0755 /run/sshd
 sudo sshd -t
 
+# Packer plugins, preinstalled for the worker user (packer keeps them in
+# ~/.config/packer/plugins).
+sudo -u "$WORKER_USER" -H packer plugins install \
+    github.com/ivoronin/sshkey "v${PACKER_SSHKEY_PLUGIN_VERSION}"
+sudo -u "$WORKER_USER" -H packer plugins install \
+    github.com/hashicorp/qemu "v${PACKER_QEMU_PLUGIN_VERSION}"
+
 # Fail the build early on a broken toolchain.
 opencode --version
 exordos version
 packer version
+sudo -u "$WORKER_USER" -H packer plugins installed \
+    | grep -F "packer-plugin-sshkey_v${PACKER_SSHKEY_PLUGIN_VERSION}_"
+sudo -u "$WORKER_USER" -H packer plugins installed \
+    | grep -F "packer-plugin-qemu_v${PACKER_QEMU_PLUGIN_VERSION}_"
 qemu-img --version
 gcc --version
 g++ --version

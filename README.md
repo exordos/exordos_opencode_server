@@ -60,9 +60,34 @@ Mounted by metapaas under `/api/metapaas/v1/types/opencode/`:
 | `pools/<uuid>/leases/` | create, list, get, delete |
 | `pools/<uuid>/leases/<uuid>/actions/release/invoke` | POST: release the worker |
 
-Pools are global and administered in the metapaas project. Leases belong to
-the caller's project. The element exports the lease permissions for clients
-to bind to their own roles.
+Pools are global; leases belong to the caller's project. Access goes
+through the element's own roles, never the owner role: Core grants a role's
+permissions wherever the role is held, so a permission bound to the owner
+role would let every project owner administer the pools.
+
+| Role | Grants | Held by |
+|---|---|---|
+| `opencode_admin` | everything above | the metapaas user; export `admin_role` |
+| `opencode_lease_client` | `versions/` and `pools/` read, leases | clients; export `lease_client_role` |
+| `opencode_infra` | Core's `secret.ssh_key.*` | the metapaas user (the infra agent) |
+
+A client binds its user to the imported `lease_client_role` in the project
+its leases belong to, and asks for a token scoped to that project:
+
+```yaml
+imports:
+  opencode_lease_client:
+    element: "$opencode_server"
+    kind: "resource"
+    link: "$core.iam.roles.$opencode_lease_client"
+
+resources:
+  $core.iam.rolebinding:
+    my_user_opencode:
+      role: $<element>.imports.$opencode_lease_client:uuid
+      user: $core.iam.users.$my_user:uuid
+      project: $core.iam.projects.$my_project:uuid
+```
 
 ### Setting up a pool
 
@@ -127,7 +152,8 @@ OpenCode, the Exordos CLI and Packer, plus QEMU. The `ubuntu` user has
 passwordless `sudo` and KVM access; the VM is single-tenant and destroyed with
 the lease. SSH accepts keys only. OpenCode automatic updates and sharing are
 disabled by the system managed config `/etc/opencode/opencode.jsonc`, which
-takes precedence over the pool's configuration.
+takes precedence over the pool's configuration. `/tmp` is on the disk, not
+the tmpfs systemd mounts by default: image builds keep their disks there.
 
 Image builds on a worker need nested virtualization: the hypervisors must
 expose VMX/SVM to the worker VMs.

@@ -12,7 +12,9 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+import contextlib
 import datetime
+from unittest import mock
 
 import pytest
 from restalchemy.common import exceptions as ra_e
@@ -160,3 +162,55 @@ class TestLeaseRelease:
 
     def test_release_is_not_requested_by_default(self, make_lease):
         assert make_lease().release_requested is False
+
+
+# Rows written from two sides: each side writes only its own columns.
+
+
+def _statements(obj, write):
+    session = mock.Mock()
+    engine = mock.Mock()
+    engine.session_manager.return_value = contextlib.nullcontext(session)
+    with mock.patch.object(type(obj), "_get_engine", return_value=engine):
+        write()
+    return [call.args for call in session.execute.call_args_list]
+
+
+def _columns(statement):
+    assignments = statement.split(" SET ")[1].split(" WHERE ")[0]
+    return {part.split(" = ")[0] for part in assignments.split(", ")}
+
+
+def test_a_lease_update_leaves_the_release_request_alone(make_lease):
+    lease = make_lease()
+    lease.status = c.LeaseStatus.ACTIVE.value
+
+    ((statement, values),) = _statements(lease, lease.update)
+
+    assert "release_requested" not in _columns(statement)
+    assert {"status", "updated_at"} <= _columns(statement)
+    assert values[-1] == str(lease.uuid)
+
+
+def test_a_release_request_writes_only_itself(make_lease):
+    lease = make_lease()
+
+    ((statement, values),) = _statements(lease, lease.request_release)
+
+    assert _columns(statement) == {"release_requested", "updated_at"}
+    assert values[0] is True
+
+
+def test_a_pool_update_leaves_the_purge_request_alone(pool):
+    pool.hot_size = 3
+
+    ((statement, _),) = _statements(pool, pool.update)
+
+    assert "purge_before" not in _columns(statement)
+    assert "hot_size" in _columns(statement)
+
+
+def test_a_purge_request_writes_only_itself(pool):
+    ((statement, _),) = _statements(pool, pool.request_purge)
+
+    assert _columns(statement) == {"purge_before", "updated_at"}

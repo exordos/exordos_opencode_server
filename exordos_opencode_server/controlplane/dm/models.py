@@ -59,6 +59,39 @@ class SSHPublicKey(types.String):
         return len(parts) >= 2 and parts[0] in SSH_KEY_TYPES
 
 
+def _update_columns(obj, names, session=None) -> None:
+    """Write some columns of a row, touching nothing else.
+
+    A statement of its own: restalchemy's table update writes every
+    column of the model, whatever data it is given.
+    """
+    values = obj._get_prepared_data({name: obj.properties[name] for name in names})
+    ids = obj._get_prepared_data(obj.get_id_properties())
+    statement = "UPDATE {} SET {} WHERE {}".format(
+        obj.__tablename__,
+        ", ".join(f"{name} = %s" for name in values),
+        " AND ".join(f"{name} = %s" for name in ids),
+    )
+    with obj._get_engine().session_manager(session=session) as s:
+        s.execute(statement, (*values.values(), *ids.values()))
+
+
+class _OwnColumnsUpdateMixin:
+    """`update()` writes only the columns `get_data_properties` names.
+
+    A row written from two sides keeps the other side's columns out of
+    `get_data_properties`; restalchemy's own update would still write
+    every column of the model (and fail on the one it was not given).
+    Placed before `orm.SQLStorableMixin` so `ModelWithTimestamp` still
+    stamps `updated_at` first.
+    """
+
+    def update(self, session=None, force=False):
+        if self.is_dirty() or force:
+            self.validate()
+            _update_columns(self, tuple(self.get_data_properties()), session)
+
+
 class ImmutableFieldError(ra_e.ValidationErrorException):
     message = "Field %(field)s can't be changed."
 
@@ -91,6 +124,7 @@ class Pool(
     models.ModelWithUUID,
     models.ModelWithNameDesc,
     models.ModelWithTimestamp,
+    _OwnColumnsUpdateMixin,
     orm.SQLStorableMixin,
     ua_models.TargetResourceMixin,
 ):
@@ -169,18 +203,7 @@ class Pool(
         """Drop the free workers created so far, touching nothing else."""
         self.purge_before = datetime.datetime.now(datetime.UTC)
         self.properties["updated_at"].set_value_force(self.purge_before)
-        with self._get_engine().session_manager(session=session) as s:
-            self.get_table().update(
-                engine=self._get_engine(),
-                ids=self._get_prepared_data(self.get_id_properties()),
-                data=self._get_prepared_data(
-                    {
-                        name: self.properties[name]
-                        for name in ("purge_before", "updated_at")
-                    }
-                ),
-                session=s,
-            )
+        _update_columns(self, ("purge_before", "updated_at"), session)
 
 
 class Lease(
@@ -188,6 +211,7 @@ class Lease(
     models.ModelWithNameDesc,
     models.ModelWithProject,
     models.ModelWithTimestamp,
+    _OwnColumnsUpdateMixin,
     orm.SQLStorableMixin,
 ):
     """A client's order for a worker.
@@ -242,18 +266,7 @@ class Lease(
         self.properties["updated_at"].set_value_force(
             datetime.datetime.now(datetime.UTC)
         )
-        with self._get_engine().session_manager(session=session) as s:
-            self.get_table().update(
-                engine=self._get_engine(),
-                ids=self._get_prepared_data(self.get_id_properties()),
-                data=self._get_prepared_data(
-                    {
-                        name: self.properties[name]
-                        for name in ("release_requested", "updated_at")
-                    }
-                ),
-                session=s,
-            )
+        _update_columns(self, ("release_requested", "updated_at"), session)
 
     def update(self, session=None, force=False):
         for field in ("pool", "ssh_public_key"):

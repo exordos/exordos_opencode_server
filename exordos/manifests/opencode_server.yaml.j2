@@ -48,73 +48,108 @@ resources:
     lease_release:
       name: "exordos_opencode_server.lease.release"
 
-  # Everything is granted to the metapaas project owner role. Clients get
-  # the lease permissions (see exports) bound to their own roles.
-  $core.iam.permissionbinding:
-    version_read_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$version_read:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    pool_create_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$pool_create:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    pool_read_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$pool_read:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    pool_update_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$pool_update:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    pool_delete_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$pool_delete:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    pool_purge_idle_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$pool_purge_idle:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    worker_read_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$worker_read:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    lease_create_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$lease_create:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    lease_read_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$lease_read:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    lease_delete_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$lease_delete:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    lease_release_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
-      permission: $core.iam.permissions.$lease_release:uuid
-      project_id: "4d657461-0000-0000-0000-000000000002"
+  # A permission bound to a role is granted wherever the role is: Core
+  # does not scope permission bindings by project. So nothing here is
+  # bound to the owner role, which every project owner holds - that would
+  # let any of them administer the global pools. The element brings its
+  # own roles instead, granted to a user in a project by a role binding.
+  $core.iam.roles:
+    # Everything about pools, workers and leases.
+    opencode_admin:
+      name: "opencode_admin"
+      description: "Administer OpenCode pools, workers and leases"
+    # What a client needs: find a pool and order workers from it. Leases
+    # are project resources, so a client binds its user to this role in
+    # the project its leases belong to (see exports).
+    opencode_lease_client:
+      name: "opencode_lease_client"
+      description: "Order OpenCode workers (leases) from the pools"
     # The infra agent manages client keys as Core SSH keys
     # (/v1/secret/ssh_keys/) as the metapaas user, and the Core owner role
-    # does not carry secret.ssh_key.*. The permissions are Core's own,
-    # referenced by their fixed UUIDs (exordos_core core.yaml.j2).
-    core_ssh_key_read_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
+    # does not carry secret.ssh_key.*.
+    opencode_infra:
+      name: "opencode_infra"
+      description: "Manage the Core SSH keys of OpenCode workers"
+
+  # Permission names must match the API controllers.
+  $core.iam.permissionbinding:
+    admin_version_read_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$version_read:uuid
+    admin_pool_create_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$pool_create:uuid
+    admin_pool_read_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$pool_read:uuid
+    admin_pool_update_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$pool_update:uuid
+    admin_pool_delete_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$pool_delete:uuid
+    admin_pool_purge_idle_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$pool_purge_idle:uuid
+    admin_worker_read_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$worker_read:uuid
+    admin_lease_create_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$lease_create:uuid
+    admin_lease_read_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$lease_read:uuid
+    admin_lease_delete_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$lease_delete:uuid
+    admin_lease_release_binding:
+      role: $core.iam.roles.$opencode_admin:uuid
+      permission: $core.iam.permissions.$lease_release:uuid
+    client_version_read_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$version_read:uuid
+    client_pool_read_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$pool_read:uuid
+    client_lease_create_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_create:uuid
+    client_lease_read_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_read:uuid
+    client_lease_delete_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_delete:uuid
+    client_lease_release_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_release:uuid
+    # Core's own permissions, by their fixed UUIDs (exordos_core
+    # core.yaml.j2).
+    infra_core_ssh_key_read_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
       permission: "42079bc1-48b3-4ffd-8131-35d1e4e5be05"
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    core_ssh_key_create_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
+    infra_core_ssh_key_create_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
       permission: "e491736f-2749-42f7-ad39-bea4362cc38e"
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    core_ssh_key_update_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
+    infra_core_ssh_key_update_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
       permission: "de7298aa-45d0-442f-96a2-efc84a40c56d"
-      project_id: "4d657461-0000-0000-0000-000000000002"
-    core_ssh_key_delete_binding:
-      role: "726f6c65-0000-0000-0000-000000000002"
+    infra_core_ssh_key_delete_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
       permission: "23102ef6-c168-4490-8cd1-4b1a6903964b"
-      project_id: "4d657461-0000-0000-0000-000000000002"
+
+  # The metapaas user (fixed in the metapaas manifest) runs the plugin's
+  # services, in the metapaas project.
+  $core.iam.rolebinding:
+    metapaas_opencode_admin:
+      role: $core.iam.roles.$opencode_admin:uuid
+      user: "4d657461-0000-0000-0000-000000000001"
+      project: "4d657461-0000-0000-0000-000000000002"
+    metapaas_opencode_infra:
+      role: $core.iam.roles.$opencode_infra:uuid
+      user: "4d657461-0000-0000-0000-000000000001"
+      project: "4d657461-0000-0000-0000-000000000002"
 
   # The worker image. One stable entry: every release of the element
   # updates its image in place. Manifest pools link its `image`, so EM
@@ -130,13 +165,9 @@ resources:
 exports:
   version:
     link: "$opencode_server.types.opencode.versions.$default"
-  lease_create:
-    link: "$core.iam.permissions.$lease_create"
-  lease_read:
-    link: "$core.iam.permissions.$lease_read"
-  lease_delete:
-    link: "$core.iam.permissions.$lease_delete"
-  lease_release:
-    link: "$core.iam.permissions.$lease_release"
-  pool_read:
-    link: "$core.iam.permissions.$pool_read"
+  # Bound to a client's user in the client's project.
+  lease_client_role:
+    link: "$core.iam.roles.$opencode_lease_client"
+  # Bound to whoever administers the pools.
+  admin_role:
+    link: "$core.iam.roles.$opencode_admin"

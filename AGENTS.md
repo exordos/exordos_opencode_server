@@ -104,8 +104,11 @@ make build     # exordos build (needs the exordos CLI, packer, KVM)
   controller's `__policy_name__`. A mismatch is a silent 403 at runtime;
   `exordos_opencode_server/tests/unit/test_definition.py`
   guards it.
+- Never bind a permission to the owner role: Core grants a role's
+  permissions in every project it is held in, so it would reach every
+  project owner. Bind to the element's roles (`$core.iam.roles`).
 - Use the well-known fixed UUIDs already present in the manifest (metapaas
-  project, owner role, EM project id in `versions.*.description`). Do not
+  project, metapaas user, EM project id in `versions.*.description`). Do not
   invent new ones.
 - Manifest grammar is specified in `../exordos_core/docs/em/manifest.md`.
 - Every `.py` and shell file starts with the Apache-2.0 / Genesis Corporation
