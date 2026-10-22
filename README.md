@@ -19,7 +19,7 @@ no node or processes of its own.
 | Model | What it is |
 |---|---|
 | `Version` | A worker image, declared by the element manifest (read-only). Pools copy its `image`. |
-| `Pool` | The hot pool configuration: flavor and sizes. Declared by a manifest or managed via the API. |
+| `Pool` | The hot pool configuration of a project: flavor and sizes. Declared by a manifest or managed via the API. |
 | `Worker` | One disposable VM (a Core node). Mirrors a Core `Machine`. |
 | `Lease` | A client's order for a worker. Mirrors a Core `Node`. |
 
@@ -60,22 +60,37 @@ Mounted by metapaas under `/api/metapaas/v1/types/opencode/`:
 | `pools/<uuid>/leases/` | create, list, get, delete |
 | `pools/<uuid>/leases/<uuid>/actions/release/invoke` | POST: release the worker |
 
-Pools are global; leases belong to the caller's project. Access goes
-through the element's own roles, never the owner role: Core grants a role's
-permissions wherever the role is held, so a permission bound to the owner
-role would let every project owner administer the pools.
+Pools and their leases belong to a project: every call is scoped by the
+project of the caller's token, so a project sees and uses only its own
+pools. Access goes through the element's own roles, never the owner role:
+Core grants a role's permissions wherever the role is held, so a permission
+bound to the owner role would reach every project owner.
 
-| Role | Grants | Held by |
+| Role | Grants | Export |
 |---|---|---|
-| `opencode_admin` | everything above | the metapaas user; export `admin_role` |
-| `opencode_lease_client` | `versions/` and `pools/` read, leases | clients; export `lease_client_role` |
-| `opencode_infra` | Core's `secret.ssh_key.*` | the metapaas user (the infra agent) |
+| `opencode_pool_admin` | everything above | `pool_admin_role` |
+| `opencode_lease_client` | `versions/` and `pools/` read, leases | `lease_client_role` |
+| `opencode_infra` | Core's `secret.ssh_key.*`; held by the metapaas user (the infra agent) | |
 
-A client binds its user to the imported `lease_client_role` in the project
-its leases belong to, and asks for a token scoped to that project:
+A consumer binds its user to an imported role in its own project and asks
+for a token scoped to that project. A binding without a project grants the
+role in every project, for an operator with a token without a project.
+
+### Setting up a pool
+
+A consumer usually declares its pool in its own manifest, in its own
+project, and orders leases from it:
 
 ```yaml
+requirements:
+  opencode_server:
+    from_version: "<version>"
+
 imports:
+  opencode_version:
+    element: "$opencode_server"
+    kind: "resource"
+    link: "$opencode_server.types.opencode.versions.$default"
   opencode_lease_client:
     element: "$opencode_server"
     kind: "resource"
@@ -87,27 +102,24 @@ resources:
       role: $<element>.imports.$opencode_lease_client:uuid
       user: $core.iam.users.$my_user:uuid
       project: $core.iam.projects.$my_project:uuid
+
+  $opencode_server.types.opencode.pools:
+    my_pool:
+      name: "my_pool"
+      project_id: $core.iam.projects.$my_project:uuid
+      image: $<element>.imports.$opencode_version:image
+      hot_size: 1
+      opencode_config: {"model": "<provider>/<model>", "provider": {...}}
 ```
 
-### Setting up a pool
-
-The `opencode_halogen_qwen38` element declares a ready pool (6 cores, 8 GiB RAM,
-1 hot worker) for an OpenAI-compatible Halogen endpoint. The endpoint is a
-Variable Store variable, so it never ends up in the published artifact. Set
-it right after installing the element:
-
-```bash
-exordos vs vars set opencode_halogen_qwen38_base_url https://<host>/v1
-```
-
-Workers booted before the variable is set carry an empty `baseURL`; they
-are replaced automatically once the pool picks up the value.
-
-The core-agent syncs only the pools whose `description` is the EM project id.
+`image` is a copy of the version's image: a new release of opencode_server
+updates it in place, and EM re-renders the pool, which replaces its free
+workers. The core-agent syncs only the pools it created from a manifest.
 Change a manifest pool through its manifest, not the API: the next
 reconciliation reverts API edits to the fields the manifest sets.
 
-Any other pool is created through the API:
+A pool can also be created through the API, with a token of the project
+it goes to:
 
 ```bash
 curl -X POST .../api/metapaas/v1/types/opencode/pools/ -d '{
@@ -123,6 +135,9 @@ curl -X POST .../api/metapaas/v1/types/opencode/pools/ -d '{
 ```
 
 `opencode_config` becomes `~/.config/opencode/opencode.json` on every worker.
+The lease holder owns that file and has `sudo` on the worker, and so does
+whatever runs there: a provider key in it is readable by them. Give a pool
+a key of its own, limited by the provider, never a shared one.
 A flavor change (`image`, `cores`, `ram`, `disk_size`,
 `ssh_user`, `opencode_config`) replaces the free workers automatically;
 workers already handed out to a lease keep their flavor. `purge_idle` drops

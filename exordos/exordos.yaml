@@ -19,10 +19,6 @@ build:
         - output
 
   elements:
-    # A ready pool for the halogen-qwen3.8 model, installed on top of the
-    # opencode_server element.
-    - manifest: manifests/opencode_halogen_qwen38.yaml.j2
-
     - manifest: manifests/opencode_server.yaml.j2
       artifacts:
         # The MetaPaaS plugin wheel, installed into metapaas at runtime.

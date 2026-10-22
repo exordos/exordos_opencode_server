@@ -30,7 +30,6 @@ EXORDOS_DIR = ROOT / "exordos"
 METAPAAS_PROJECT = "4d657461-0000-0000-0000-000000000002"
 METAPAAS_USER = "4d657461-0000-0000-0000-000000000001"
 OWNER_ROLE = "726f6c65-0000-0000-0000-000000000002"
-EM_PROJECT = "12345678-c625-4fee-81d5-f691897b8142"
 # Fixed UUIDs of Core's secret.ssh_key.* permissions.
 CORE_SSH_KEY_PERMISSIONS = {
     "read": "42079bc1-48b3-4ffd-8131-35d1e4e5be05",
@@ -63,11 +62,6 @@ def manifest():
         artifacts={"pypi_package": "urn:artifacts:wheel"},
         images={"opencode_worker": "urn:images:worker"},
     )
-
-
-@pytest.fixture(scope="module")
-def opencode_halogen_qwen38():
-    return render("opencode_halogen_qwen38.yaml.j2")
 
 
 @pytest.fixture(scope="module")
@@ -132,18 +126,18 @@ def _local(*keys):
 def test_nothing_is_bound_to_the_owner_role(manifest):
     # Core grants a role's permissions in every project the role is held
     # in, and every project owner holds the owner role: binding to it would
-    # let any of them administer the global pools.
+    # hand the plugin to every project owner.
     bindings = manifest["resources"]["$core.iam.permissionbinding"].values()
     roles = set(manifest["resources"]["$core.iam.roles"])
-    assert roles == {"opencode_admin", "opencode_lease_client", "opencode_infra"}
+    assert roles == {"opencode_pool_admin", "opencode_lease_client", "opencode_infra"}
     for binding in bindings:
         assert binding["role"] != OWNER_ROLE
         assert binding["role"] in {f"$core.iam.roles.${r}:uuid" for r in roles}
 
 
-def test_admin_role_has_every_permission(manifest):
+def test_pool_admin_role_has_every_permission(manifest):
     permissions = manifest["resources"]["$core.iam.permissions"]
-    assert _granted(manifest, "opencode_admin") == _local(*permissions)
+    assert _granted(manifest, "opencode_pool_admin") == _local(*permissions)
 
 
 def test_lease_client_role(manifest):
@@ -166,14 +160,15 @@ def test_infra_role_manages_core_ssh_keys(manifest):
 
 
 def test_metapaas_user_roles(manifest):
-    bindings = manifest["resources"]["$core.iam.rolebinding"]
-    assert {b["role"] for b in bindings.values()} == {
-        "$core.iam.roles.$opencode_admin:uuid",
-        "$core.iam.roles.$opencode_infra:uuid",
+    # Only the infra agent calls Core as the metapaas user; the other
+    # services work on the database.
+    assert manifest["resources"]["$core.iam.rolebinding"] == {
+        "metapaas_opencode_infra": {
+            "role": "$core.iam.roles.$opencode_infra:uuid",
+            "user": METAPAAS_USER,
+            "project": METAPAAS_PROJECT,
+        }
     }
-    for binding in bindings.values():
-        assert binding["user"] == METAPAAS_USER
-        assert binding["project"] == METAPAAS_PROJECT
 
 
 def test_version_catalog(manifest):
@@ -181,7 +176,6 @@ def test_version_catalog(manifest):
     assert versions == {
         "default": {
             "name": "default",
-            "description": EM_PROJECT,
             "image": "urn:images:worker",
         }
     }
@@ -195,13 +189,14 @@ def test_exports_roles(manifest):
     assert exports["lease_client_role"] == {
         "link": "$core.iam.roles.$opencode_lease_client"
     }
-    assert exports["admin_role"] == {"link": "$core.iam.roles.$opencode_admin"}
-    assert set(exports) == {"version", "lease_client_role", "admin_role"}
+    assert exports["pool_admin_role"] == {
+        "link": "$core.iam.roles.$opencode_pool_admin"
+    }
+    assert set(exports) == {"version", "lease_client_role", "pool_admin_role"}
 
 
 def test_build_descriptor(build):
-    pool_element, element = build["elements"]
-    assert pool_element == {"manifest": "manifests/opencode_halogen_qwen38.yaml.j2"}
+    (element,) = build["elements"]
     assert element["manifest"] == "manifests/opencode_server.yaml.j2"
     (artifact,) = element["artifacts"]
     assert artifact["name"] == "pypi_package"
@@ -236,39 +231,3 @@ def test_opencode_runtime_config():
     config = json.loads(re.sub(r"^\s*//.*$", "", text, flags=re.MULTILINE))
     assert config["autoupdate"] is False
     assert config["share"] == "disabled"
-
-
-def test_opencode_halogen_qwen38_requires_the_element(opencode_halogen_qwen38):
-    assert opencode_halogen_qwen38["name"] == "opencode_halogen_qwen38"
-    assert set(opencode_halogen_qwen38["requirements"]) == {"core", c.ELEMENT_NAME}
-    assert opencode_halogen_qwen38["imports"]["version"] == {
-        "element": f"${c.ELEMENT_NAME}",
-        "kind": "resource",
-        "link": f"${c.ELEMENT_NAME}.types.{c.SLUG}.versions.$default",
-    }
-
-
-def test_opencode_halogen_qwen38_pool(opencode_halogen_qwen38):
-    pools = opencode_halogen_qwen38["resources"][
-        f"${c.ELEMENT_NAME}.types.{c.SLUG}.pools"
-    ]
-    pool = pools["halogen_qwen38"]
-    # The core-agent syncs only the pools marked with the EM project id.
-    assert pool["description"] == EM_PROJECT
-    assert pool["image"] == "$opencode_halogen_qwen38.imports.$version:image"
-    assert "version" not in pool
-    assert (pool["cores"], pool["ram"], pool["hot_size"]) == (6, 8192, 1)
-    config = pool["opencode_config"]
-    provider = config["provider"]["halogen"]
-    assert config["model"] == "halogen/" + next(iter(provider["models"]))
-    assert provider["options"] == {"baseURL": "$core.vs.variables.$base_url:value"}
-
-
-def test_opencode_halogen_qwen38_endpoint_is_a_runtime_variable(
-    opencode_halogen_qwen38,
-):
-    # No endpoint is baked into the published artifact.
-    variable = opencode_halogen_qwen38["resources"]["$core.vs.variables"]["base_url"]
-    assert variable["name"] == "opencode_halogen_qwen38_base_url"
-    assert variable["project_id"] == EM_PROJECT
-    assert variable["setter"] == {"kind": "selector", "selector_strategy": "latest"}

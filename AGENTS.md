@@ -42,8 +42,7 @@ exordos_opencode_server/
 │   ├── images/build_wheel.sh         # builds the plugin wheel artifact
 │   ├── images/worker_install.sh      # worker image provisioning
 │   └── manifests/
-│       ├── opencode_server.yaml.j2   # the plugin element
-│       └── opencode_halogen_qwen38.yaml.j2  # a ready pool on top of it
+│       └── opencode_server.yaml.j2   # the plugin element
 ├── etc/opencode.jsonc                # system managed OpenCode config
 ├── exordos_opencode_server/
 │   ├── definition.py                 # PaaSDefinition, the plugin entry point
@@ -87,12 +86,16 @@ make build     # exordos build (needs the exordos CLI, packer, KVM)
   writer: the API changes a lease only through its own `release_requested`
   column (`Lease.request_release`), and `Lease.update` never writes it, so
   no row lock is needed. Never let the API write `status`.
+- Pools and leases are project resources: the API scopes every call by the
+  caller's project, and a lease belongs to its pool's project. There are no
+  shared pools; every consumer declares its own.
 - Pool configuration (flavor, hot pool size) lives in the API or in a
-  manifest (`$opencode_server.types.opencode.pools`, synced by the core-agent
-  when `description` is the EM project id). `purge_before` is written only by
-  `Pool.request_purge`, never by a whole-row update. The scheduler replaces
-  free workers whose flavor snapshot differs from the pool
-  (`Worker.has_flavor_of`); bound workers keep theirs.
+  manifest (`$opencode_server.types.opencode.pools`). The core-agent has no
+  filter for it (`get_agent_filters` is empty), so it keeps to the pools it
+  created from manifests and never touches API pools. `purge_before` is
+  written only by `Pool.request_purge`, never by a whole-row update. The
+  scheduler replaces free workers whose flavor snapshot differs from the
+  pool (`Worker.has_flavor_of`); bound workers keep theirs.
 - A pool stores the worker `image` itself, never a reference to a
   `Version` row. Manifest pools link `$...versions.$default:image`, so a
   new release of the element re-renders them through EM.
@@ -108,8 +111,7 @@ make build     # exordos build (needs the exordos CLI, packer, KVM)
   permissions in every project it is held in, so it would reach every
   project owner. Bind to the element's roles (`$core.iam.roles`).
 - Use the well-known fixed UUIDs already present in the manifest (metapaas
-  project, metapaas user, EM project id in `versions.*.description`). Do not
-  invent new ones.
+  project, metapaas user). Do not invent new ones.
 - Manifest grammar is specified in `../exordos_core/docs/em/manifest.md`.
 - Every `.py` and shell file starts with the Apache-2.0 / Genesis Corporation
   license header. Copy it from an existing file.

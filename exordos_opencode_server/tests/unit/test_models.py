@@ -14,6 +14,7 @@
 
 import contextlib
 import datetime
+import uuid
 from unittest import mock
 
 import pytest
@@ -51,7 +52,9 @@ class TestSSHPublicKey:
 
 class TestPool:
     def test_defaults(self):
-        pool = models.Pool(name="p", image="urn:images:test-image")
+        pool = models.Pool(
+            name="p", project_id=uuid.uuid4(), image="urn:images:test-image"
+        )
         assert pool.hot_size == 1
         assert pool.ssh_user == c.DEFAULT_SSH_USER
         assert pool.opencode_config == {}
@@ -68,6 +71,7 @@ class TestPool:
         resource = pool.to_ua_resource("em_opencode_server_types_opencode_pools")
         assert resource.value["name"] == pool.name
         assert resource.value["cores"] == pool.cores
+        assert resource.value["project_id"] == str(pool.project_id)
 
 
 class TestLease:
@@ -96,7 +100,9 @@ class TestLease:
 
     def test_pool_is_immutable(self, make_lease):
         lease = make_lease()
-        lease.pool = models.Pool(name="other", image="urn:images:test-image")
+        lease.pool = models.Pool(
+            name="other", project_id=lease.project_id, image="urn:images:test-image"
+        )
         with pytest.raises(models.ImmutableFieldError):
             lease.update()
 

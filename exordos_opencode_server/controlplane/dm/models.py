@@ -123,17 +123,18 @@ class Version(
 class Pool(
     models.ModelWithUUID,
     models.ModelWithNameDesc,
+    models.ModelWithProject,
     models.ModelWithTimestamp,
     _OwnColumnsUpdateMixin,
     orm.SQLStorableMixin,
     ua_models.TargetResourceMixin,
 ):
-    """The hot pool configuration, managed by an administrator.
+    """The hot pool configuration of a project.
 
     A pool is created either through the API or by an element manifest
     (`$opencode_server.types.opencode.pools`). The metapaas core-agent syncs
-    only the pools whose `description` carries the EM project id, so the
-    pools created through the API are never touched by it.
+    only the pools it created from a manifest, so the pools created through
+    the API are never touched by it. Its leases belong to its project.
 
     Changing the flavor (image, cores, ram, disk_size,
     ssh_user, opencode_config) replaces the free workers: the scheduler

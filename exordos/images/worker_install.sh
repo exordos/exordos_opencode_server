@@ -18,8 +18,8 @@ APP_DIR="/opt/exordos_opencode_server"
 WORKER_USER="ubuntu"
 WORKER_HOME="/home/${WORKER_USER}"
 
-OPENCODE_VERSION="1.19.0"
-OPENCODE_SHA256="6334d70db3990721ea454357e9cf2573c8685524ad7769af9d52cbffb7008438"
+OPENCODE_VERSION="1.19.3"
+OPENCODE_SHA256="531cff2441129c30f0edd5878af494108ad07f5feb46d7ee29a2a5b830a5765d"
 OPENCODE_ASSET="opencode-linux-x64-baseline.tar.gz"
 OPENCODE_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OPENCODE_ASSET}"
 

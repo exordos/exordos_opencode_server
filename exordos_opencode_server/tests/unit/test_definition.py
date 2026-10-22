@@ -15,6 +15,7 @@
 import importlib
 import os
 
+from gcl_iam import controllers as iam_controllers
 from restalchemy.api import routes as ra_routes
 
 from exordos_opencode_server import constants as c
@@ -38,10 +39,15 @@ class TestDefinition:
     def test_agent_models_resolve(self):
         definition = OpencodeDefinition()
         models = definition.get_agent_models()
-        assert set(models) == set(definition.get_agent_filters())
         for spec in models.values():
             module, _, name = spec.partition(":")
             assert hasattr(importlib.import_module(module), name)
+
+    def test_agent_filters_none(self):
+        # Without a filter the core-agent keeps to the rows it created from
+        # manifests, in whatever project; a filter would also have it take
+        # over the pools created through the API.
+        assert OpencodeDefinition().get_agent_filters() == {}
 
     def test_infra_agent_owns_its_capabilities_only(self):
         # Kinds are global across plugins: keep ours prefixed with the slug,
@@ -70,6 +76,11 @@ class TestApi:
     def test_versions_and_workers_are_read_only(self):
         for route in (routes.VersionRoute, routes.WorkerRoute):
             assert set(route.__allow_methods__) == {ra_routes.FILTER, ra_routes.GET}
+
+    def test_pools_are_scoped_by_project(self):
+        assert issubclass(
+            controllers.PoolController, iam_controllers.PolicyBasedController
+        )
 
     def test_policy_names(self):
         for controller, name in (

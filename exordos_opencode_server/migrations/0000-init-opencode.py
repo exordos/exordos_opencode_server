@@ -42,8 +42,9 @@ class MigrationStep(migrations.AbstarctMigrationStep):
             """
             CREATE TABLE opencode_pools (
                 uuid UUID PRIMARY KEY,
-                name VARCHAR(255) UNIQUE NOT NULL,
+                name VARCHAR(255) NOT NULL,
                 description TEXT,
+                project_id UUID NOT NULL,
                 image VARCHAR(255) NOT NULL,
                 cores INT NOT NULL CHECK (cores BETWEEN 1 AND 128),
                 ram INT NOT NULL CHECK (ram BETWEEN 1024 AND 1048576),
@@ -54,7 +55,8 @@ class MigrationStep(migrations.AbstarctMigrationStep):
                 opencode_config JSONB NOT NULL DEFAULT '{}',
                 purge_before TIMESTAMP,
                 created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL
+                updated_at TIMESTAMP NOT NULL,
+                UNIQUE (project_id, name)
             );
             """,
             """

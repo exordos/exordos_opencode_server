@@ -31,6 +31,7 @@ NOW = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.UTC)
 def pool():
     return models.Pool(
         name="default",
+        project_id=PROJECT_ID,
         image="urn:images:test-image",
         cores=2,
         ram=4096,

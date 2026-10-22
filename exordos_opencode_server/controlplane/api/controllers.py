@@ -51,10 +51,15 @@ class VersionController(
 
 
 class PoolController(
-    iam_controllers.PolicyBasedWithoutProjectController,
+    iam_controllers.PolicyBasedController,
     ra_controllers.BaseResourceControllerPaginated,
 ):
-    """Controller for /v1/types/opencode/pools/ endpoint"""
+    """Controller for /v1/types/opencode/pools/ endpoint
+
+    Pools are project resources: every call is scoped by the caller's
+    project, and so is everything nested under a pool, since the parent is
+    looked up through this controller.
+    """
 
     __policy_service_name__ = c.POLICY_SERVICE_NAME
     __policy_name__ = "pool"
@@ -126,8 +131,9 @@ class LeaseController(
 ):
     """Controller for /v1/types/opencode/pools/<uuid>/leases/ endpoint
 
-    Leases are project resources nested under a global pool, so every call
-    is scoped by the caller's project rather than by the parent.
+    A lease belongs to its pool's project. The pool is already looked up
+    within the caller's project; every call is scoped by it once more, so
+    the leases do not depend on how the parent was found.
     """
 
     __policy_service_name__ = c.POLICY_SERVICE_NAME
@@ -153,8 +159,9 @@ class LeaseController(
     )
 
     def create(self, parent_resource, **kwargs):
-        # Check the policy and pin the lease to the caller's project, so a
-        # foreign project_id in the request is rejected.
+        # The lease goes to its pool's project, also for a token without a
+        # project. A foreign project_id in the request is rejected.
+        kwargs.setdefault("project_id", parent_resource.project_id)
         self._enforce_and_override_project_id_in_kwargs("create", kwargs)
         return super(iam_controllers.PolicyBasedControllerMixin, self).create(
             parent_resource=parent_resource, **kwargs

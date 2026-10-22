@@ -66,9 +66,7 @@ class OpencodeDefinition(PaaSDefinition):
         }
 
     def get_agent_filters(self):
-        # Pools are global like versions: the EM project id in
-        # `description` marks the ones declared by a manifest.
-        return {
-            "versions": "description",
-            "pools": "description",
-        }
+        # None: without a filter the core-agent works on the rows it created
+        # from manifests (its target fields), whatever their project. The
+        # pools created through the API are left alone.
+        return {}
