@@ -1,5 +1,5 @@
 name: "opencode_server"
-description: "Authenticated OpenCode Server with persistent state"
+description: "Disposable OpenCode build workers served from a hot pool (MetaPaaS plugin)."
 schema_version: 1
 version: "{{ version }}"
 api_version: "v1"
@@ -7,89 +7,162 @@ api_version: "v1"
 requirements:
   core:
     from_version: "0.0.0"
+  metapaas:
+    from_version: "1.2.0"
 
 resources:
-  $core.compute.nodes:
-    opencode_server:
-      name: "opencode-server"
-      description: "OpenCode Server and persistent workspace"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      cores: 2
-      ram: 4096
-      disk_spec:
-        kind: "disks"
-        disks:
-          - label: "root"
-            size: 8
-            image: "{{ images['opencode_server'] }}"
-          - label: "data"
-            size: 20
 
-  $core.secret.passwords:
-    opencode_server_password:
-      name: "opencode-server-password"
-      description: "OpenCode Server Basic Auth password"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      method: "AUTO_URL_SAFE"
-      constructor:
-        kind: "plain"
-      default_length: 48
+  # Register the opencode PaaS type in metapaas. The metapaas core-agent
+  # reconciles it into metapaas_paas_types; the PluginReconciler then
+  # installs the package, applies its migrations and restarts the services.
+  $metapaas.types:
+    opencode:
+      name: "opencode"
+      element_name: "opencode_server"
+      package: "{{ artifacts.pypi_package }}"
+      project_id: "4d657461-0000-0000-0000-000000000002"
 
-  $core.vs.variables:
-    opencode_server_endpoint:
-      name: "opencode_server_endpoint"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      setter:
-        kind: "selector"
-        selector_strategy: "latest"
-    opencode_server_login:
-      name: "opencode_server_login"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      setter:
-        kind: "selector"
-        selector_strategy: "latest"
+  # Permission names must match the API controllers:
+  # exordos_opencode_server.<policy>.<action>.
+  $core.iam.permissions:
+    version_read:
+      name: "exordos_opencode_server.version.read"
+    pool_create:
+      name: "exordos_opencode_server.pool.create"
+    pool_read:
+      name: "exordos_opencode_server.pool.read"
+    pool_update:
+      name: "exordos_opencode_server.pool.update"
+    pool_delete:
+      name: "exordos_opencode_server.pool.delete"
+    pool_purge_idle:
+      name: "exordos_opencode_server.pool.purge_idle"
+    worker_read:
+      name: "exordos_opencode_server.worker.read"
+    lease_create:
+      name: "exordos_opencode_server.lease.create"
+    lease_read:
+      name: "exordos_opencode_server.lease.read"
+    lease_delete:
+      name: "exordos_opencode_server.lease.delete"
+    lease_release:
+      name: "exordos_opencode_server.lease.release"
 
-  $core.vs.values:
-    opencode_server_endpoint:
-      name: "OpenCode Server endpoint"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      read_only: true
-      variable: $core.vs.variables.$opencode_server_endpoint:uuid
-      value: f"http://{$core.compute.nodes.$opencode_server:default_network:ipv4}:4096"
-    opencode_server_login:
-      name: "OpenCode Server login"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      read_only: true
-      variable: $core.vs.variables.$opencode_server_login:uuid
-      value: "opencode"
+  # A permission bound to a role is granted wherever the role is held:
+  # Core does not scope permission bindings by project. So nothing here is
+  # bound to the owner role, which every project owner holds. The element
+  # brings its own roles instead, granted to a user in a project by a role
+  # binding. Pools and leases belong to a project, and the API scopes every
+  # call by the project of the caller's token, so a role held in a project
+  # reaches that project's pools only.
+  $core.iam.roles:
+    # Everything about the project's pools, workers and leases.
+    opencode_pool_admin:
+      name: "opencode_pool_admin"
+      description: "Manage the project's OpenCode pools, workers and leases"
+    # What a client needs: find a pool of its project and order workers
+    # from it.
+    opencode_lease_client:
+      name: "opencode_lease_client"
+      description: "Order OpenCode workers (leases) from the project's pools"
+    # The infra agent manages client keys as Core SSH keys
+    # (/v1/secret/ssh_keys/) as the metapaas user, and the Core owner role
+    # does not carry secret.ssh_key.*.
+    opencode_infra:
+      name: "opencode_infra"
+      description: "Manage the Core SSH keys of OpenCode workers"
 
-  $core.config.configs:
-    opencode_server_environment:
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      path: /etc/opencode_server/server.env
-      mode: "0640"
-      owner: root
-      group: opencode
-      target:
-        kind: node
-        node: $core.compute.nodes.$opencode_server:uuid
-      on_change:
-        kind: shell
-        command: /usr/local/bin/opencode-server-reload
-      body:
-        kind: text
-        content: |
-          f"OPENCODE_SERVER_USERNAME={$core.vs.variables.$opencode_server_login:value}
-          OPENCODE_SERVER_PASSWORD={$core.secret.passwords.$opencode_server_password:value}
-          "
+  # Permission names must match the API controllers.
+  $core.iam.permissionbinding:
+    pool_admin_version_read_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$version_read:uuid
+    pool_admin_pool_create_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$pool_create:uuid
+    pool_admin_pool_read_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$pool_read:uuid
+    pool_admin_pool_update_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$pool_update:uuid
+    pool_admin_pool_delete_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$pool_delete:uuid
+    pool_admin_pool_purge_idle_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$pool_purge_idle:uuid
+    pool_admin_worker_read_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$worker_read:uuid
+    pool_admin_lease_create_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$lease_create:uuid
+    pool_admin_lease_read_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$lease_read:uuid
+    pool_admin_lease_delete_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$lease_delete:uuid
+    pool_admin_lease_release_binding:
+      role: $core.iam.roles.$opencode_pool_admin:uuid
+      permission: $core.iam.permissions.$lease_release:uuid
+    client_version_read_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$version_read:uuid
+    client_pool_read_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$pool_read:uuid
+    client_lease_create_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_create:uuid
+    client_lease_read_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_read:uuid
+    client_lease_delete_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_delete:uuid
+    client_lease_release_binding:
+      role: $core.iam.roles.$opencode_lease_client:uuid
+      permission: $core.iam.permissions.$lease_release:uuid
+    # Core's own permissions, by their fixed UUIDs (exordos_core
+    # core.yaml.j2).
+    infra_core_ssh_key_read_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
+      permission: "42079bc1-48b3-4ffd-8131-35d1e4e5be05"
+    infra_core_ssh_key_create_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
+      permission: "e491736f-2749-42f7-ad39-bea4362cc38e"
+    infra_core_ssh_key_update_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
+      permission: "de7298aa-45d0-442f-96a2-efc84a40c56d"
+    infra_core_ssh_key_delete_binding:
+      role: $core.iam.roles.$opencode_infra:uuid
+      permission: "23102ef6-c168-4490-8cd1-4b1a6903964b"
+
+  # The metapaas user (fixed in the metapaas manifest) runs the plugin's
+  # infra agent, in the metapaas project. The other services work on the
+  # database and need no role.
+  $core.iam.rolebinding:
+    metapaas_opencode_infra:
+      role: $core.iam.roles.$opencode_infra:uuid
+      user: "4d657461-0000-0000-0000-000000000001"
+      project: "4d657461-0000-0000-0000-000000000002"
+
+  # The worker image. One stable entry: every release of the element
+  # updates its image in place. Manifest pools link its `image`, so EM
+  # re-renders them with the new image.
+  $opencode_server.types.opencode.versions:
+    default:
+      name: "default"
+      image: "{{ images.opencode_worker }}"
 
 exports:
-  endpoint:
-    kind: "resource"
-    link: "$core.vs.variables.$opencode_server_endpoint"
-  login:
-    kind: "resource"
-    link: "$core.vs.variables.$opencode_server_login"
-  password:
-    kind: "resource"
-    link: "$core.secret.passwords.$opencode_server_password"
+  version:
+    link: "$opencode_server.types.opencode.versions.$default"
+  # Bound to a client's user in the project its pools and leases belong to.
+  lease_client_role:
+    link: "$core.iam.roles.$opencode_lease_client"
+  # Bound to whoever manages a project's pools, in that project.
+  pool_admin_role:
+    link: "$core.iam.roles.$opencode_pool_admin"

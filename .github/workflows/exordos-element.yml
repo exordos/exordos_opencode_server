@@ -111,12 +111,13 @@ jobs:
             exit 1
           fi
 
-          image="${element_dir}/images/opencode_server.raw.zst"
+          image="${element_dir}/images/opencode_worker.raw.zst"
           manifest="${element_dir}/manifests/opencode_server.yaml"
           test -s "${element_dir}/inventory.json"
           test -s "${manifest}"
           test -s "${image}"
           zstd --test "${image}"
+          find "${element_dir}/artifacts" -type f -name "*.whl" | grep -q .
 
           while IFS= read -r -d '' artifact; do
             artifact_size="$(stat --format='%s' "${artifact}")"

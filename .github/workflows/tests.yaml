@@ -14,6 +14,7 @@ jobs:
         python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libev-dev
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -24,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y libev-dev
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -31,8 +33,5 @@ jobs:
       - run: tox -e ruff
       - run: >-
           bash -n
-          exordos/images/install.sh
-          exordos/images/bootstrap.sh
-          scripts/opencode-server-health
-          scripts/opencode-server-reload
-          scripts/opencode-server-validate
+          exordos/images/build_wheel.sh
+          exordos/images/worker_install.sh
