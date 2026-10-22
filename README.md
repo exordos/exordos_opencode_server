@@ -48,9 +48,7 @@ A lease fails with `ERROR` after its workers failed to start three times.
 
 ## API
 
-Mounted by metapaas under `/api/metapaas/v1/types/opencode/`. The full URL
-(via the Core LB) is the `opencode_server_endpoint` variable, exported as
-`endpoint`:
+Mounted by metapaas under `/api/metapaas/v1/types/opencode/`:
 
 | Path | Methods |
 |---|---|

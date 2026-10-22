@@ -151,23 +151,6 @@ resources:
       user: "4d657461-0000-0000-0000-000000000001"
       project: "4d657461-0000-0000-0000-000000000002"
 
-  # The plugin API, served by metapaas behind the Core LB.
-  $core.vs.variables:
-    opencode_server_endpoint:
-      name: "opencode_server_endpoint"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      setter:
-        kind: "selector"
-        selector_strategy: "latest"
-
-  $core.vs.values:
-    opencode_server_endpoint:
-      name: "OpenCode Server endpoint"
-      project_id: "12345678-c625-4fee-81d5-f691897b8142"
-      read_only: true
-      variable: $core.vs.variables.$opencode_server_endpoint:uuid
-      value: f"http://{$opencode_server.imports.$core_ip_address:value}/api/metapaas/v1/types/opencode/"
-
   # The worker image. One stable entry: every release of the element
   # updates its image in place. Manifest pools link its `image`, so EM
   # re-renders them with the new image.
@@ -179,17 +162,7 @@ resources:
       description: "12345678-c625-4fee-81d5-f691897b8142"
       image: "{{ images.opencode_worker }}"
 
-imports:
-  core_ip_address:
-    element: "$core"
-    kind: "resource"
-    link: "$core.vs.variables.$core_ip_address"
-
 exports:
-  # The plugin API URL.
-  endpoint:
-    kind: "resource"
-    link: "$core.vs.variables.$opencode_server_endpoint"
   version:
     link: "$opencode_server.types.opencode.versions.$default"
   # Bound to a client's user in the client's project.
