@@ -196,7 +196,29 @@ def test_exports_roles(manifest):
         "link": "$core.iam.roles.$opencode_lease_client"
     }
     assert exports["admin_role"] == {"link": "$core.iam.roles.$opencode_admin"}
-    assert set(exports) == {"version", "lease_client_role", "admin_role"}
+    assert set(exports) == {"endpoint", "version", "lease_client_role", "admin_role"}
+
+
+def test_exports_endpoint(manifest):
+    assert manifest["exports"]["endpoint"] == {
+        "kind": "resource",
+        "link": "$core.vs.variables.$opencode_server_endpoint",
+    }
+    assert manifest["imports"]["core_ip_address"] == {
+        "element": "$core",
+        "kind": "resource",
+        "link": "$core.vs.variables.$core_ip_address",
+    }
+    variable = manifest["resources"]["$core.vs.variables"]["opencode_server_endpoint"]
+    assert variable["project_id"] == EM_PROJECT
+    value = manifest["resources"]["$core.vs.values"]["opencode_server_endpoint"]
+    assert value["read_only"] is True
+    assert value["project_id"] == EM_PROJECT
+    assert value["variable"] == "$core.vs.variables.$opencode_server_endpoint:uuid"
+    assert value["value"] == (
+        'f"http://{$opencode_server.imports.$core_ip_address:value}'
+        '/api/metapaas/v1/types/opencode/"'
+    )
 
 
 def test_build_descriptor(build):

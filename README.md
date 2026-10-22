@@ -48,7 +48,9 @@ A lease fails with `ERROR` after its workers failed to start three times.
 
 ## API
 
-Mounted by metapaas under `/api/metapaas/v1/types/opencode/`:
+Mounted by metapaas under `/api/metapaas/v1/types/opencode/`. The full URL
+(via the Core LB) is the `opencode_server_endpoint` variable, exported as
+`endpoint`:
 
 | Path | Methods |
 |---|---|
@@ -92,7 +94,7 @@ resources:
 ### Setting up a pool
 
 The `opencode_halogen_qwen38` element declares a ready pool (6 cores, 8 GiB RAM,
-2 hot workers) for an OpenAI-compatible Halogen endpoint. The endpoint is a
+1 hot worker) for an OpenAI-compatible Halogen endpoint. The endpoint is a
 Variable Store variable, so it never ends up in the published artifact. Set
 it right after installing the element:
 
