@@ -1,10 +1,11 @@
 name: Exordos element
 
 on:
-  pull_request:
   push:
-    branches: ["**"]
-    tags: ["*"]
+    branches-ignore:
+      - master
+    tags:
+      - "*"
   workflow_dispatch:
 
 concurrency:
