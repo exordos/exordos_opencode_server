@@ -23,8 +23,8 @@ OPENCODE_SHA256="531cff2441129c30f0edd5878af494108ad07f5feb46d7ee29a2a5b830a5765
 OPENCODE_ASSET="opencode-linux-x64-baseline.tar.gz"
 OPENCODE_URL="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OPENCODE_ASSET}"
 
-EXORDOS_VERSION="3.2.23"
-EXORDOS_SHA256="33f71c0d3e731cba24c4fce866536ffc3cb2f10672e2c9ea4e13bff7d1c76799"
+EXORDOS_VERSION="3.2.30"
+EXORDOS_SHA256="ba821dc2d70d140de61bd3d5bb487b8b755876b3aebb93a55dcdd00b9db6c4c0"
 EXORDOS_URL="https://github.com/exordos/exordos/releases/download/${EXORDOS_VERSION}/exordos-linux"
 
 PACKER_VERSION="1.9.2"
