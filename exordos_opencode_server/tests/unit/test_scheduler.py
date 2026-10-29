@@ -13,6 +13,7 @@
 #    under the License.
 
 import datetime
+import uuid
 
 import pytest
 
@@ -75,6 +76,28 @@ class TestHotPool:
         result = plan(pool, workers=[failed, ok])
         assert uuids(result.obsolete_workers) == {failed.uuid}
         assert len(result.new_workers) == 1
+
+    def test_free_worker_error_within_grace_is_not_replaced(
+        self, pool, make_worker, make_lease
+    ):
+        flapping = make_worker(
+            status="ERROR", error_at=NOW - datetime.timedelta(seconds=5)
+        )
+        ok = make_worker()
+        result = plan(pool, workers=[flapping, ok])
+        assert not result.obsolete_workers
+        assert not result.new_workers
+
+    def test_free_worker_in_error_is_not_handed_out(
+        self, pool, make_worker, make_lease
+    ):
+        flapping = make_worker(
+            status="ERROR", error_at=NOW - datetime.timedelta(seconds=5)
+        )
+        lease = make_lease()
+        result = plan(pool, leases=[lease], workers=[flapping])
+        assert flapping.lease is None
+        assert lease.worker in uuids(result.new_workers)
 
 
 class TestBinding:
@@ -205,11 +228,69 @@ class TestLeaseLifecycle:
         assert lease.error
 
     def test_lease_lost_worker_goes_back_to_queue(self, pool, make_worker, make_lease):
-        lease = make_lease(status="ACTIVE", ipv4="10.0.0.10")
+        lease = make_lease(status="SCHEDULED")
         ready = make_worker()
         plan(pool, leases=[lease], workers=[ready])
         assert lease.worker == ready.uuid
         assert lease.status == c.LeaseStatus.SCHEDULED.value
+
+    def test_handed_out_lease_that_lost_worker_fails(
+        self, pool, make_worker, make_lease
+    ):
+        lease = make_lease(status="ACTIVE", worker=uuid.uuid4(), ipv4="10.0.0.10")
+        ready = make_worker()
+        result = plan(pool, leases=[lease], workers=[ready])
+        assert lease.status == c.LeaseStatus.ERROR.value
+        assert lease.error
+        assert lease.ipv4 is None
+        assert ready.lease is None
+        assert lease in result.leases
+
+    def test_worker_error_within_grace_keeps_lease(self, pool, make_worker, make_lease):
+        lease, worker = self.bound(make_worker, make_lease, "ERROR", "SCHEDULED")
+        worker.error_at = NOW - datetime.timedelta(seconds=5)
+        result = plan(pool, leases=[lease], workers=[worker])
+        assert not result.obsolete_workers
+        assert lease.status == c.LeaseStatus.SCHEDULED.value
+        assert lease.worker == worker.uuid
+        assert lease.attempts == 0
+        assert lease not in result.leases
+
+    def test_worker_error_after_grace_requeues_lease(
+        self, pool, make_worker, make_lease
+    ):
+        lease, worker = self.bound(make_worker, make_lease, "ERROR", "SCHEDULED")
+        worker.error_at = NOW - datetime.timedelta(seconds=c.WORKER_FAILURE_GRACE)
+        result = plan(pool, leases=[lease], workers=[worker])
+        assert uuids(result.obsolete_workers) == {worker.uuid}
+        assert lease.status == c.LeaseStatus.NEW.value
+
+    def test_busy_worker_flap_keeps_handed_out_lease(
+        self, pool, make_worker, make_lease
+    ):
+        lease, worker = self.bound(
+            make_worker, make_lease, "ERROR", "ACTIVE", ipv4="10.0.0.10"
+        )
+        worker.error_at = NOW - datetime.timedelta(seconds=5)
+        result = plan(pool, leases=[lease], workers=[worker])
+        assert not result.obsolete_workers
+        assert lease.status == c.LeaseStatus.ACTIVE.value
+        assert lease.ipv4 == "10.0.0.10"
+
+    def test_failed_busy_worker_fails_handed_out_lease(
+        self, pool, make_worker, make_lease
+    ):
+        lease, worker = self.bound(
+            make_worker, make_lease, "ERROR", "ACTIVE", ipv4="10.0.0.10"
+        )
+        result = plan(pool, leases=[lease], workers=[worker])
+        assert uuids(result.obsolete_workers) == {worker.uuid}
+        assert lease.status == c.LeaseStatus.ERROR.value
+        assert lease.error
+        assert lease.ipv4 is None
+        # Not requeued: no other worker is bound to the lease.
+        assert all(w.lease != lease.uuid for w in result.new_workers)
+        assert all(w.lease != lease.uuid for w in result.workers)
 
 
 class TestGarbage:

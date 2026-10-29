@@ -43,6 +43,12 @@ class WorkerInfraBuilder(builder.CoreInfraBuilder):
     - key on the node: BUSY;
     - anything failed: ERROR.
 
+    Once the node has been up (the worker has an address), its status is
+    no longer a reason to change the target: Core may report a node that
+    is up as IN_PROGRESS for a moment, and withdrawing the config and the
+    key would cut the client off a live worker. Only ERROR counts then,
+    and the scheduler decides whether it lasted long enough to matter.
+
     The builder only declares the target state; the infra agents apply it
     to Core and bring the actual state back.
     """
@@ -72,21 +78,26 @@ class WorkerInfraBuilder(builder.CoreInfraBuilder):
 
         node = instance.build_node(self._project_id)
         node_actual = actuals.get(c.NODE_KIND)
+        node_status = None if node_actual is None else node_actual.status
 
-        if node_actual is None or node_actual.status != ACTIVE:
-            if node_actual is not None and node_actual.status == ERROR:
-                instance.status = c.WorkerStatus.ERROR.value
+        if node_status == ACTIVE:
+            ipv4 = (node_actual.default_network or {}).get("ipv4")
+            if ipv4:
+                instance.ipv4 = ipv4
+
+        if instance.ipv4 is None:
+            # The node has never been up: configs and keys target the
+            # node, so they wait for it.
+            if node_status == ERROR:
+                self._set_status(instance, c.WorkerStatus.ERROR.value)
             else:
-                instance.status = c.WorkerStatus.IN_PROGRESS.value
-            # Configs and keys target the node, so they wait for it.
+                if node_status == ACTIVE:
+                    LOG.info(
+                        "Worker %s node is active without an address yet",
+                        instance.uuid,
+                    )
+                self._set_status(instance, c.WorkerStatus.IN_PROGRESS.value)
             return (node,)
-
-        ipv4 = (node_actual.default_network or {}).get("ipv4")
-        if not ipv4:
-            LOG.info("Worker %s node is active without an address yet", instance.uuid)
-            instance.status = c.WorkerStatus.IN_PROGRESS.value
-            return (node,)
-        instance.ipv4 = ipv4
 
         targets = [node]
         config = instance.build_opencode_config(self._project_id)
@@ -96,16 +107,29 @@ class WorkerInfraBuilder(builder.CoreInfraBuilder):
         if ssh_key is not None:
             targets.append(ssh_key)
 
-        instance.status = self._derive_status(
-            config=config,
-            config_actual=actuals.get(c.CONFIG_KIND),
-            ssh_key=ssh_key,
-            ssh_key_actual=actuals.get(c.SSH_KEY_KIND),
-        )
+        if node_status in (ERROR, None):
+            # Failed or gone from Core after it has been up.
+            status = c.WorkerStatus.ERROR.value
+        else:
+            status = self._derive_status(
+                config=config,
+                config_actual=actuals.get(c.CONFIG_KIND),
+                ssh_key=ssh_key,
+                ssh_key_actual=actuals.get(c.SSH_KEY_KIND),
+            )
+        self._set_status(instance, status)
         if instance.status == c.WorkerStatus.READY.value and instance.ready_at is None:
             instance.ready_at = datetime.datetime.now(datetime.UTC)
 
         return tuple(targets)
+
+    @staticmethod
+    def _set_status(instance: models.Worker, status: str) -> None:
+        instance.status = status
+        if status != c.WorkerStatus.ERROR.value:
+            instance.error_at = None
+        elif instance.error_at is None:
+            instance.error_at = datetime.datetime.now(datetime.UTC)
 
     @staticmethod
     def _derive_status(config, config_actual, ssh_key, ssh_key_actual) -> str:

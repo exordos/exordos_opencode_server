@@ -143,7 +143,7 @@ class Worker(models.Worker, ua_models.InstanceWithDerivativesMixin):
     def get_resource_ignore_fields(self) -> tp.Collection[str]:
         # Runtime state written by the scheduler and the builder; it must
         # not make the worker look changed to the builder.
-        return frozenset(("pool", "lease", "status", "ipv4", "ready_at"))
+        return frozenset(("pool", "lease", "status", "ipv4", "ready_at", "error_at"))
 
     # Derivative identities are stable per worker so the builder always
     # emits the same resources.

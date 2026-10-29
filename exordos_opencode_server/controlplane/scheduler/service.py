@@ -86,6 +86,11 @@ def _sync_lease(lease: models.Lease, worker: models.Worker) -> bool:
     )
 
 
+def _is_handed_out(lease: models.Lease) -> bool:
+    """The client has got the worker's address and may be working on it."""
+    return lease.status == c.LeaseStatus.ACTIVE.value
+
+
 def _release(lease: models.Lease) -> None:
     lease.status = c.LeaseStatus.RELEASED.value
     lease.worker = None
@@ -121,6 +126,7 @@ class _PoolPlanner:
         # Free workers by readiness, oldest first, and the pool size.
         self._ready: list[models.Worker] = []
         self._provisioning: list[models.Worker] = []
+        self._suspended: list[models.Worker] = []
         self._total = 0
 
     def plan(self) -> PoolPlan:
@@ -164,19 +170,44 @@ class _PoolPlanner:
 
         self._live_leases.add(lease.uuid)
 
-        if worker is None:
+        if worker is None and _is_handed_out(lease):
+            self._lose_lease(lease, f"worker {lease.worker} of the lease is gone")
+        elif worker is None:
             if _set(lease, status=c.LeaseStatus.NEW.value, worker=None, ipv4=None):
                 _mark(self._plan.leases, lease)
             self._pending.append(lease)
-        elif worker.status == c.WorkerStatus.ERROR.value:
+        elif worker.has_failed(self._now):
             self._fail_lease(lease, worker)
+        elif worker.status == c.WorkerStatus.ERROR.value:
+            # Maybe a flap: the lease stays as it is until the worker
+            # recovers or its grace period runs out.
+            pass
         elif _sync_lease(lease, worker):
             _mark(self._plan.leases, lease)
+
+    def _lose_lease(self, lease: models.Lease, error: str) -> None:
+        """The client lost the worker it was given: the lease ends.
+
+        It is not requeued: a new worker has another address and none of
+        the client's work, so the client decides what to do next.
+        """
+        LOG.warning("Lease %s failed: %s", lease.uuid, error)
+        lease.status = c.LeaseStatus.ERROR.value
+        lease.error = error
+        lease.worker = None
+        lease.ipv4 = None
+        self._live_leases.discard(lease.uuid)
+        _mark(self._plan.leases, lease)
 
     def _fail_lease(self, lease: models.Lease, worker: models.Worker) -> None:
         """The lease's worker failed: requeue the lease or give up on it."""
         self._destroy(worker)
         lease.attempts += 1
+        if _is_handed_out(lease):
+            self._lose_lease(
+                lease, f"worker {worker.uuid} failed after the lease was handed out"
+            )
+            return
         lease.worker = None
         lease.ipv4 = None
         if lease.attempts >= c.MAX_LEASE_ATTEMPTS:
@@ -192,8 +223,9 @@ class _PoolPlanner:
         _mark(self._plan.leases, lease)
 
     # 2. Garbage: a worker that served a lease which is gone or final, a
-    # worker that once got a key, a failed free worker, a free worker with
-    # an outdated flavor or created before the last purge.
+    # worker that once got a key, a free worker that has failed (see
+    # `Worker.has_failed`), a free worker with an outdated flavor or
+    # created before the last purge.
 
     def _collect_garbage(self) -> None:
         for worker in self._workers:
@@ -205,7 +237,7 @@ class _PoolPlanner:
             return worker.lease not in self._live_leases
         if worker.ssh_public_key is not None:
             return True
-        if worker.status == c.WorkerStatus.ERROR.value:
+        if worker.has_failed(self._now):
             return True
         # Whoever changed the pool (the API, the core-agent), its free
         # workers are replaced with the new flavor.
@@ -226,6 +258,15 @@ class _PoolPlanner:
             (w for w in free if w.status != c.WorkerStatus.READY.value),
             key=lambda w: w.created_at,
         )
+        # Free workers in ERROR that may still recover: not handed out,
+        # but not replaced either, so a flap does not churn the hot pool.
+        self._suspended = [
+            w
+            for w in alive
+            if w.lease is None
+            and w.ssh_public_key is None
+            and w.status == c.WorkerStatus.ERROR.value
+        ]
 
     # 3. Bind pending leases: a ready worker first, then one still booting,
     # then a new one if the pool may grow.
@@ -262,7 +303,7 @@ class _PoolPlanner:
     # 4. Keep exactly hot_size free workers.
 
     def _keep_hot_pool(self) -> None:
-        free_count = len(self._ready) + len(self._provisioning)
+        free_count = len(self._ready) + len(self._provisioning) + len(self._suspended)
         while free_count < self._pool.hot_size and self._total < self._pool.max_workers:
             self._create_worker()
             free_count += 1
