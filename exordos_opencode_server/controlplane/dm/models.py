@@ -343,6 +343,12 @@ class Worker(
         types.AllowNone(types.UTCDateTimeZ()),
         default=None,
     )
+    # Since when the worker is in ERROR. Written by the builder together
+    # with `status`, cleared once the worker recovers.
+    error_at = properties.property(
+        types.AllowNone(types.UTCDateTimeZ()),
+        default=None,
+    )
 
     @classmethod
     def from_pool(cls, pool: Pool, **kwargs) -> "Worker":
@@ -381,6 +387,16 @@ class Worker(
             and self.ssh_public_key is None
             and self.status in c.FREE_WORKER_STATUSES
         )
+
+    def has_failed(self, now: datetime.datetime | None = None) -> bool:
+        """The worker has stayed in ERROR long enough to be given up."""
+        if self.status != c.WorkerStatus.ERROR.value:
+            return False
+        if self.error_at is None:
+            return True
+        now = now or datetime.datetime.now(datetime.UTC)
+        grace = datetime.timedelta(seconds=c.WORKER_FAILURE_GRACE)
+        return self.error_at + grace <= now
 
     def bind(self, lease: Lease) -> None:
         self.lease = lease.uuid

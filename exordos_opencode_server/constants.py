@@ -31,6 +31,12 @@ OPENCODE_CONFIG_PATH = "/home/{user}/.config/opencode/opencode.json"
 # before it is given up with ERROR.
 MAX_LEASE_ATTEMPTS = 3
 
+# A worker is given up only after it has stayed in ERROR this long, in
+# seconds. Core may report a node that is up as not ACTIVE for a moment,
+# for instance while its hypervisor is updated; such a flap must not
+# destroy a worker, least of all one a client is working on.
+WORKER_FAILURE_GRACE = 120
+
 # Name the plugin's own infra agent is derived from (uuid5 of the CP node
 # system uuid). It must differ from the metapaas infra agent, which owns
 # the node_set and config capabilities.

@@ -201,3 +201,74 @@ class TestWorkerInfraBuilder:
             ),
         )
         assert worker.status == c.WorkerStatus.ERROR.value
+
+
+class TestProvisionedWorker:
+    """A worker whose node has been up: a node flap must not cut it off."""
+
+    @pytest.fixture
+    def busy(self, worker):
+        worker.ssh_public_key = PUBLIC_KEY
+        worker.ipv4 = "10.0.0.10"
+        worker.status = c.WorkerStatus.BUSY.value
+        return worker
+
+    def delivered(self, worker, node_status, **node_fields):
+        node = worker.build_node(PROJECT)
+        config = worker.build_opencode_config(PROJECT)
+        key = worker.build_ssh_key(PROJECT)
+        return collection(
+            (node, actual(node, node_status, **node_fields)),
+            (config, actual(config, "ACTIVE")),
+            (key, actual(key, "ACTIVE")),
+        )
+
+    def test_node_flap_keeps_config_and_key(self, infra_builder, busy):
+        targets = infra_builder.actualize_infra(
+            busy, self.delivered(busy, "IN_PROGRESS")
+        )
+        assert kinds(targets) == [
+            "opencode_config",
+            "opencode_node",
+            "opencode_ssh_key",
+        ]
+        assert busy.status == c.WorkerStatus.BUSY.value
+        assert busy.error_at is None
+
+    def test_node_error_keeps_config_and_key(self, infra_builder, busy):
+        targets = infra_builder.actualize_infra(busy, self.delivered(busy, "ERROR"))
+        assert kinds(targets) == [
+            "opencode_config",
+            "opencode_node",
+            "opencode_ssh_key",
+        ]
+        assert busy.status == c.WorkerStatus.ERROR.value
+        assert busy.error_at is not None
+
+    def test_error_keeps_its_first_timestamp(self, infra_builder, busy):
+        infra_builder.actualize_infra(busy, self.delivered(busy, "ERROR"))
+        first = busy.error_at
+        infra_builder.actualize_infra(busy, self.delivered(busy, "ERROR"))
+        assert busy.error_at == first
+
+    def test_recovery_clears_error(self, infra_builder, busy):
+        infra_builder.actualize_infra(busy, self.delivered(busy, "ERROR"))
+        infra_builder.actualize_infra(
+            busy,
+            self.delivered(busy, "ACTIVE", default_network={"ipv4": "10.0.0.10"}),
+        )
+        assert busy.status == c.WorkerStatus.BUSY.value
+        assert busy.error_at is None
+
+    def test_node_gone_is_error(self, infra_builder, busy):
+        config = busy.build_opencode_config(PROJECT)
+        targets = infra_builder.actualize_infra(
+            busy, collection((config, actual(config, "ACTIVE")))
+        )
+        assert "opencode_ssh_key" in kinds(targets)
+        assert busy.status == c.WorkerStatus.ERROR.value
+
+    def test_booting_node_error_sets_timestamp(self, infra_builder, worker):
+        node = worker.build_node(PROJECT)
+        infra_builder.actualize_infra(worker, collection((node, actual(node, "ERROR"))))
+        assert worker.error_at is not None

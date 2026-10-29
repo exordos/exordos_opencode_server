@@ -44,7 +44,17 @@ A lease's lifecycle:
    `release_requested`; the scheduler destroys the worker on its next
    iteration, so `status` changes a few seconds later.
 
-A lease fails with `ERROR` after its workers failed to start three times.
+A worker counts as failed only after it has stayed in `ERROR` for two
+minutes (`WORKER_FAILURE_GRACE`): Core may report a node that is up as not
+`ACTIVE` for a moment, and such a flap changes nothing. Once the node has
+been up, the worker keeps its OpenCode config and the lease's key whatever
+Core reports about the node.
+
+A lease whose worker failed before the lease became `ACTIVE` is requeued
+to another worker; it fails with `ERROR` after its workers failed to start
+three times. A lease that is already `ACTIVE` is never moved: a new worker
+would have another address and none of the client's work, so the lease
+fails with `ERROR` right away and the client decides what to do next.
 
 ## API
 

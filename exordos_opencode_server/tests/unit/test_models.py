@@ -144,6 +144,18 @@ class TestWorker:
     def test_worker_with_key_is_never_free(self, make_worker):
         assert not make_worker(ssh_public_key=PUBLIC_KEY).is_free()
 
+    def test_has_failed_after_grace(self, make_worker):
+        grace = datetime.timedelta(seconds=c.WORKER_FAILURE_GRACE)
+        worker = make_worker(status="ERROR", error_at=NOW)
+        assert not worker.has_failed(NOW + grace - datetime.timedelta(seconds=1))
+        assert worker.has_failed(NOW + grace)
+
+    def test_error_without_timestamp_has_failed(self, make_worker):
+        assert make_worker(status="ERROR").has_failed(NOW)
+
+    def test_healthy_worker_has_not_failed(self, make_worker):
+        assert not make_worker(status="BUSY", error_at=NOW).has_failed(NOW)
+
     def test_bind_ready_worker(self, make_worker, make_lease):
         worker = make_worker()
         lease = make_lease()
