@@ -277,6 +277,26 @@ class TestLeaseLifecycle:
         assert lease.status == c.LeaseStatus.ACTIVE.value
         assert lease.ipv4 == "10.0.0.10"
 
+    @pytest.mark.parametrize("worker_status", ["RESERVED", "IN_PROGRESS"])
+    def test_handed_out_lease_does_not_go_back(
+        self, pool, make_worker, make_lease, worker_status
+    ):
+        lease, worker = self.bound(
+            make_worker, make_lease, worker_status, "ACTIVE", ipv4="10.0.0.10"
+        )
+        result = plan(pool, leases=[lease], workers=[worker])
+        assert lease.status == c.LeaseStatus.ACTIVE.value
+        assert lease.ipv4 == "10.0.0.10"
+        assert lease not in result.leases
+
+        # The worker then fails for good: the lease ends, not requeued.
+        worker.status = c.WorkerStatus.ERROR.value
+        worker.error_at = NOW - datetime.timedelta(seconds=c.WORKER_FAILURE_GRACE)
+        result = plan(pool, leases=[lease], workers=[worker])
+        assert lease.status == c.LeaseStatus.ERROR.value
+        assert all(w.lease != lease.uuid for w in result.new_workers)
+        assert all(w.lease != lease.uuid for w in result.workers)
+
     def test_failed_busy_worker_fails_handed_out_lease(
         self, pool, make_worker, make_lease
     ):
