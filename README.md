@@ -176,10 +176,11 @@ curl -X POST .../pools/<pool>/leases/<lease>/actions/release/invoke
 The `opencode_worker` image contains pinned, checksum-verified releases of
 OpenCode, the Exordos CLI, Packer and uv, plus QEMU. The `ubuntu` user has
 passwordless `sudo` and KVM access; the VM is single-tenant and destroyed with
-the lease. The `builder` user is for code the client does not trust (an
-application's own build and its packages' install scripts): it has no `sudo`,
-no KVM and no access to `ubuntu`'s home, where the pool's `opencode.json`
-with the model provider's key is. `ubuntu` runs it with `sudo -u builder`. SSH accepts keys only. OpenCode automatic updates and sharing are
+the lease. The `builder` user is for builds of code the client does not trust
+(an `exordos build`, whose artifact scripts run on the host and whose images
+take KVM): it has KVM and packer's plugins, but no `sudo` and no access to
+`ubuntu`'s home, where the pool's `opencode.json` with the model provider's
+key is. `ubuntu` runs it with `sudo -u builder`. SSH accepts keys only. OpenCode automatic updates and sharing are
 disabled by the system managed config `/etc/opencode/opencode.jsonc`, which
 takes precedence over the pool's configuration. `/tmp` is on the disk, not
 the tmpfs systemd mounts by default: image builds keep their disks there.
