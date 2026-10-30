@@ -79,6 +79,10 @@ def _sync_lease(lease: models.Lease, worker: models.Worker) -> bool:
             ipv4=worker.ipv4,
             ssh_user=worker.ssh_user,
         )
+    if _is_handed_out(lease):
+        # The config or the key flaps in Core: the client keeps the
+        # worker it was given, and the lease never goes back.
+        return False
     return _set(
         lease,
         status=c.LeaseStatus.SCHEDULED.value,

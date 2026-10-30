@@ -52,7 +52,8 @@ Core reports about the node.
 
 A lease whose worker failed before the lease became `ACTIVE` is requeued
 to another worker; it fails with `ERROR` after its workers failed to start
-three times. A lease that is already `ACTIVE` is never moved: a new worker
+three times. A lease that is already `ACTIVE` never goes back to
+`SCHEDULED` and is never moved: a new worker
 would have another address and none of the client's work, so the lease
 fails with `ERROR` right away and the client decides what to do next.
 
