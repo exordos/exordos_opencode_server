@@ -208,10 +208,23 @@ def test_build_descriptor(build):
 
 def test_worker_image_pins_downloads():
     script = (EXORDOS_DIR / "images" / "worker_install.sh").read_text()
-    for name in ("OPENCODE", "EXORDOS", "PACKER"):
+    for name in ("OPENCODE", "EXORDOS", "PACKER", "UV"):
         assert re.search(rf'^{name}_VERSION="[0-9.]+"$', script, re.MULTILINE)
         assert re.search(rf'^{name}_SHA256="[0-9a-f]{{64}}"$', script, re.MULTILINE)
     assert "sha256sum --check --strict" in script
+
+
+def test_worker_image_has_an_unprivileged_build_user():
+    script = (EXORDOS_DIR / "images" / "worker_install.sh").read_text()
+
+    assert re.search(r'^BUILDER_USER="builder"$', script, re.MULTILINE)
+    builder = script[script.index('if ! getent passwd "$BUILDER_USER"') :]
+    builder = builder[: builder.index("\n\n")]
+    # No group beyond its own, and no sudoers entry.
+    assert "--groups" not in builder
+    assert "--user-group" in builder
+    assert "sudoers" not in builder
+    assert 'sudo chmod 0700 "$WORKER_HOME"' in script
 
 
 def test_worker_image_preinstalls_pinned_packer_plugins():
