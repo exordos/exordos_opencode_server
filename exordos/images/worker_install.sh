@@ -9,11 +9,11 @@
 # it. The client logs in over SSH as `ubuntu` (its key is delivered by
 # Exordos Core when the lease is bound) and runs the OpenCode CLI, the
 # Exordos CLI and image builds (packer + qemu/KVM) there, with
-# gcc/g++, a JDK and Go for building elements in those languages. What a
-# client builds from code it does not trust runs as `builder`, which cannot
-# read `ubuntu`'s files (the pool's opencode.json, with the model provider's
-# key). Nothing runs as a service: the image is ready as soon as the VM
-# boots.
+# gcc/g++, a JDK and Go for building elements in those languages. A build
+# of code the client does not trust - image builds included - runs as
+# `builder`, which cannot read `ubuntu`'s files (the pool's opencode.json,
+# with the model provider's key). Nothing runs as a service: the image is
+# ready as soon as the VM boots.
 
 set -euo pipefail
 
@@ -162,18 +162,22 @@ sudo install -d -o "$WORKER_USER" -g "$WORKER_USER" -m 0700 \
 # under it.
 sudo chmod 0700 "$WORKER_HOME"
 
-# The build user, for code the client does not trust (a static site's
-# `npm ci` with its packages' install scripts): no sudo, no KVM, no
-# password, no group of `ubuntu`'s. `ubuntu` runs it with `sudo -u`, hands
-# it a directory to build in and takes the directory back after.
+# The build user, for code the client does not trust: a whole `exordos
+# build`, whose artifact scripts run on the host (a static site's `npm ci`
+# with its packages' install scripts) and whose images take KVM. No sudo,
+# no password, no group of `ubuntu`'s; KVM lets it run VMs, not read
+# another user's files. `ubuntu` runs it with `sudo -u`, hands it a
+# directory to build in and takes the directory back after.
 if ! getent passwd "$BUILDER_USER" >/dev/null; then
     sudo useradd \
         --create-home \
         --home-dir "$BUILDER_HOME" \
         --shell /bin/bash \
         --user-group \
+        --groups kvm \
         "$BUILDER_USER"
 fi
+sudo usermod --append --groups kvm "$BUILDER_USER"
 sudo usermod --lock "$BUILDER_USER"
 sudo chmod 0700 "$BUILDER_HOME"
 
@@ -194,21 +198,25 @@ printf '%s\n' \
 sudo install -d -o root -g root -m 0755 /run/sshd
 sudo sshd -t
 
-# Packer plugins, preinstalled for the worker user (packer keeps them in
-# ~/.config/packer/plugins).
-sudo -u "$WORKER_USER" -H packer plugins install \
-    github.com/ivoronin/sshkey "v${PACKER_SSHKEY_PLUGIN_VERSION}"
-sudo -u "$WORKER_USER" -H packer plugins install \
-    github.com/hashicorp/qemu "v${PACKER_QEMU_PLUGIN_VERSION}"
+# Packer plugins, preinstalled for both users that build images (packer
+# keeps them in ~/.config/packer/plugins).
+for user in "$WORKER_USER" "$BUILDER_USER"; do
+    sudo -u "$user" -H packer plugins install \
+        github.com/ivoronin/sshkey "v${PACKER_SSHKEY_PLUGIN_VERSION}"
+    sudo -u "$user" -H packer plugins install \
+        github.com/hashicorp/qemu "v${PACKER_QEMU_PLUGIN_VERSION}"
+done
 
 # Fail the build early on a broken toolchain.
 opencode --version
 exordos version
 packer version
-sudo -u "$WORKER_USER" -H packer plugins installed \
-    | grep -F "packer-plugin-sshkey_v${PACKER_SSHKEY_PLUGIN_VERSION}_"
-sudo -u "$WORKER_USER" -H packer plugins installed \
-    | grep -F "packer-plugin-qemu_v${PACKER_QEMU_PLUGIN_VERSION}_"
+for user in "$WORKER_USER" "$BUILDER_USER"; do
+    sudo -u "$user" -H packer plugins installed \
+        | grep -F "packer-plugin-sshkey_v${PACKER_SSHKEY_PLUGIN_VERSION}_"
+    sudo -u "$user" -H packer plugins installed \
+        | grep -F "packer-plugin-qemu_v${PACKER_QEMU_PLUGIN_VERSION}_"
+done
 qemu-img --version
 gcc --version
 g++ --version
@@ -222,7 +230,7 @@ if sudo -l -n -U "$BUILDER_USER" | grep -q "may run"; then
     echo "$BUILDER_USER may run sudo" >&2
     exit 1
 fi
-if id -nG "$BUILDER_USER" | grep -qw -e kvm -e sudo -e "$WORKER_USER"; then
+if id -nG "$BUILDER_USER" | grep -qw -e sudo -e "$WORKER_USER"; then
     echo "$BUILDER_USER is in a privileged group: $(id -nG "$BUILDER_USER")" >&2
     exit 1
 fi

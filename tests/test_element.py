@@ -220,8 +220,8 @@ def test_worker_image_has_an_unprivileged_build_user():
     assert re.search(r'^BUILDER_USER="builder"$', script, re.MULTILINE)
     builder = script[script.index('if ! getent passwd "$BUILDER_USER"') :]
     builder = builder[: builder.index("\n\n")]
-    # No group beyond its own, and no sudoers entry.
-    assert "--groups" not in builder
+    # KVM for image builds, no group of the worker user's, no sudoers entry.
+    assert re.findall(r"--groups (\S+)", builder) == ["kvm", "kvm"]
     assert "--user-group" in builder
     assert "sudoers" not in builder
     assert 'sudo chmod 0700 "$WORKER_HOME"' in script
@@ -236,7 +236,9 @@ def test_worker_image_preinstalls_pinned_packer_plugins():
         assert re.search(
             rf'^PACKER_{name}_PLUGIN_VERSION="[0-9.]+"$', script, re.MULTILINE
         )
-        assert f"packer plugins install \\\n    {source} " in script
+        # For both users that build images.
+        assert f"packer plugins install \\\n        {source} " in script
+    assert 'for user in "$WORKER_USER" "$BUILDER_USER"; do' in script
 
 
 def test_opencode_runtime_config():
