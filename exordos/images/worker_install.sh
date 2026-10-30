@@ -199,7 +199,10 @@ sudo install -d -o root -g root -m 0755 /run/sshd
 sudo sshd -t
 
 # Packer plugins, preinstalled for both users that build images (packer
-# keeps them in ~/.config/packer/plugins).
+# keeps them in ~/.config/packer/plugins). Packer stats its working
+# directory, and the build user cannot enter the provisioner's one (the
+# worker's 0750 home), so leave it for one every user can.
+cd /
 for user in "$WORKER_USER" "$BUILDER_USER"; do
     sudo -u "$user" -H packer plugins install \
         github.com/ivoronin/sshkey "v${PACKER_SSHKEY_PLUGIN_VERSION}"
